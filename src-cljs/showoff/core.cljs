@@ -14,7 +14,7 @@
   (by-id "content"))
 
 (def ^:dynamic *display* nil)
-(def ^:dynamic *viewport* nil) ;; expressed in tiles
+(def ^:dynamic *viewport* [0 0 16 12]) ;; expressed in tiles
 (def ^:dynamic *world-dims* [640 480]) ;; expressed in pixels
 (def ^:dynamic *tile-dims* [8 8])
 (def *tile-in-world-dims* [(/ 640 16) (/ 480 12)])
@@ -30,7 +30,6 @@
 (defn prepare-display []
   (let [[w h] *world-dims*]
     (set! *display* (make-canvas [w h]))
-    (set! *viewport* [0 0 16 12])
     (dom/appendChild (content) *display*)))
 
 (defn transform [[x y w h]]
@@ -86,6 +85,9 @@ space taking into account the current viewport"
     (set! (.-fillStyle ctx) color)
     (.fillRect ctx tx ty tw th)))
 
+(defn img-dims [img]
+  [(.-width img) (.-height img)])
+
 (defn draw-sprite [ctx img [x y]]
   (let [[tx ty tw th] (transform [x y 1 1])
         [sw sh] (img-dims img)]
@@ -102,9 +104,6 @@ space taking into account the current viewport"
   (let [img (get-img url)]
     (set! (.-onload img) (fn [] (callback img)))
     img))
-
-(defn img-dims [img]
-  [(.-width img) (.-height img)])
 
 (defn img->canvas [img]
   (let [[w h] (img-dims img)
@@ -225,7 +224,7 @@ space taking into account the current viewport"
        (until-false callback timeout)))
    timeout))
 
-(def *last-time* (js/goog.now))
+(def *last-time* (goog/now))
 (def *remaining-time* 0)
 (def +ticks-per-ms+ (/ 30 1000))
 (def +secs-per-tick+ (/ 30))
@@ -245,10 +244,14 @@ space taking into account the current viewport"
   (draw-sprite (context) *guy-sprite* *guy-position*)
   (draw-hud))
 
+(defn tick []
+  (update-guy-keyboard)
+  (update-viewport-position))
+
 (defn cycle []
-  (let [now (js/goog.now)
+  (let [now (goog/now)
         dtms (+ (- now *last-time*) *remaining-time*)
-        ticks (js/Math.floor (* +ticks-per-ms+ dtms))
+        ticks (Math/floor (* +ticks-per-ms+ dtms))
         leftover (- dtms (/ ticks +ticks-per-ms+))]
     
     (set! *last-time* now)
@@ -323,36 +326,61 @@ space taking into account the current viewport"
 (defn vec-negate [[ax ay]]
   [(- ax) (- ay)])
 
-(defn update-viewport-position []
-  ;; try to keep the player character basically centered
-  (let [[vx vy vw vh] *viewport*
-        vc (vec-add [vx vy] (vec-scale [vw vh] 0.5))
-        displacement (vec-sub *guy-position* vc)
+;; a force generator function produces a function that takes a
+;; particle and returns a force
+(defn drag-force-generator [drag-coefficient]
+  (fn [p]
+    (let [vel (:velocity p)
+          mag-velocity (vec-mag vel)
+          drag-dir (vec-negate (vec-unit vel))]
+      (vec-scale drag-dir (* mag-velocity drag-coefficient)))))
 
-        ;; compute the spring force vector
-        mag-displacement (vec-mag displacement)
-        spring-force-mag (if (> mag-displacement +viewport-max-displacement+)
-                           (* (- mag-displacement +viewport-max-displacement+)
-                              +viewport-spring-constant+)
-                           0)
-        spring-force (vec-scale (vec-unit displacement) spring-force-mag)
+(defn spring-force [displacement max-displacement spring-constant]
+  (let [mag-displacement (vec-mag displacement)
+        diff (- mag-displacement max-displacement)]
+    (if (> mag-displacement max-displacement)
+      (vec-scale (vec-unit displacement) (* spring-constant diff))
+      [0 0])))
 
-        ;; compute the drag force vector
-        mag-velocity (vec-mag *viewport-velocity*)
-        drag-force (vec-scale (vec-negate (vec-unit *viewport-velocity*))
-                              (* mag-velocity +viewport-spring-constant+))
-        
-        force (vec-add spring-force drag-force)
-        acc (vec-scale force (/ +viewport-mass+))
-        vel (vec-add *viewport-velocity* (vec-scale acc +secs-per-tick+))
-        pos (vec-add [vx vy] (vec-scale vel +secs-per-tick+))]
+;; a velocity generator function produces a function that takes a
+;; particle and returns a velocity
+(defn keyboard-velocity-generator [keycode value]
+  (fn [p]
+    (if (*command-state-map* keycode)
+      value
+      [0 0])))
+
+(defn rect-center [rect]
+  (let [[vx vy vw vh] rect]
+    (vec-add [vx vy] (vec-scale [vw vh] 0.5))))
+
+(def *viewport-particle*
+  {:mass 1
+   :position [0 0]
+   :velocity [0 0]
+
+   ;; try to keep the player character basically centered
+   :force-generators
+   [(fn [p] (spring-force (vec-sub *guy-position* (rect-center *viewport*))
+                          +viewport-max-displacement+
+                          +viewport-spring-constant+))
+    (drag-force-generator +viewport-drag-coefficient+)]})
+
+(defn integrate-particle [p]
+  (let [force (reduce (fn [force func] (vec-add force (func p)))
+                      [0 0]
+                      (:force-generators p))
+        acc (vec-scale force (:mass p))
+        vel (vec-add (:velocity p) (vec-scale acc +secs-per-tick+))
+        pos (vec-add (:position p) (vec-scale vel +secs-per-tick+))]
     
-    (viewport-offset pos)
-    (set! *viewport-velocity* vel)))
+    (conj p {:position pos
+             :velocity vel})))
 
-(defn tick []
-  (update-guy-keyboard)
-  (update-viewport-position))
+(defn update-viewport-position []
+  (let [new-viewport (integrate-particle *viewport-particle*)]
+    (viewport-offset (:position new-viewport))
+    (set! *viewport-particle* new-viewport)))
 
 (defn with-prepared-assets [callback]
   ;; a few assets we can resize lazily
@@ -375,13 +403,13 @@ space taking into account the current viewport"
                  {:kind :image
                   :image (resize-nearest-neighbor air *tile-in-world-dims*)}
                  
-                 [255 0     0]
-                     {:kind :image
-                      :image (resize-nearest-neighbor dirt *tile-in-world-dims*)}
+                 [255 0 0]
+                 {:kind :image
+                  :image (resize-nearest-neighbor dirt *tile-in-world-dims*)}
                      
-                     [0   0   255]
-                     {:kind :rect
-                      :color [0 0 255]}})
+                 [0 0 255]
+                 {:kind :rect
+                  :color [0 0 255]}})
           (callback))))))
 
 (defn ^:export main []

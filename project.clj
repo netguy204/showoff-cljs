@@ -5,12 +5,23 @@
 
   :cljsbuild
   {:builds
-   [{:source-path "src-cljs"
+   [
+    {:source-path "src-cljs"
      :compiler
      {:output-to "javascripts/main.js"
       :optimizations :whitespace
       :pretty-print true
       }
      }
+
+    {:source-path "src-cljs"
+     :compiler
+     {:output-to "javascripts/compiled.js"
+      :optimizations :advanced
+      :pretty-print true
+      }
+     :id "advanced"
+     }
+
     ]
    })
