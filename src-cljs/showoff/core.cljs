@@ -118,6 +118,13 @@ space taking into account the current viewport"
    [0   0   255] {:kind :rect
                   :color [0 0 255]}})
 
+(defn draw-sprite [ctx img pos]
+  (let [[tx ty tw th] (transform [(nth pos 0) (nth pos 1) 1 1])
+        [sw sh] *tile-dims*]
+    (.drawImage ctx img
+                0 0 sw sh
+                tx ty tw th)))
+
 (defn draw-map [map]
   (let [pdata (:pdata map)
         [w h] (:dims map)
@@ -142,9 +149,7 @@ space taking into account the current viewport"
                        (color (rec :color)))
 
           (= (rec :kind) :image)
-          (.drawImage ctx (:image rec)
-                      0 0 sw sh
-                      tx ty tw th))))))
+          (draw-sprite ctx (:image rec) [rx ry]))))))
 
 (def *current-map* nil)
 
@@ -168,13 +173,17 @@ space taking into account the current viewport"
        (until-false callback timeout)))
    timeout))
 
-(defn draw []
-  (clear)
-  (draw-map *current-map*))
-
 (def *last-time* (js/goog.now))
 (def *remaining-time* 0)
 (def +ticks-per-ms+ (/ 30 1000))
+(def +secs-per-tick+ (/ 30))
+(def *guy-position* [1 1])
+(def *guy-sprite* (with-img "sprites/guy.png" identity))
+
+(defn draw []
+  (clear)
+  (draw-map *current-map*)
+  (draw-sprite (context) *guy-sprite* *guy-position*))
 
 (defn cycle []
   (let [now (js/goog.now)
@@ -195,7 +204,7 @@ space taking into account the current viewport"
 
     true))
 
-(defn tick []
+(defn- update-viewport-keyboard []
   (let [[vx vy] (viewport-offset)
         csm *command-state-map*
         step 0.2]
@@ -210,6 +219,80 @@ space taking into account the current viewport"
 
     (when (csm (.-DOWN gevents/KeyCodes))
       (viewport-offset [vx (+ vy step)]))))
+
+(defn- update-guy-keyboard []
+    (let [[x y] *guy-position*
+        csm *command-state-map*
+        step 0.05]
+    (when (csm (.-LEFT gevents/KeyCodes))
+      (set! *guy-position* [(- x step) y]))
+
+    (when (csm (.-RIGHT gevents/KeyCodes))
+      (set! *guy-position* [(+ x step) y]))
+
+    (when (csm (.-UP gevents/KeyCodes))
+      (set! *guy-position* [x (- y step)]))
+
+    (when (csm (.-DOWN gevents/KeyCodes))
+      (set! *guy-position* [x (+ y step)]))))
+
+(def *viewport-velocity* [0 0])
+(def +viewport-spring-constant+ 1)
+(def +viewport-drag-coefficient+ 1)
+(def +viewport-mass+ 1)
+(def +viewport-max-displacement+ 3)
+
+(defn vec-add [[ax ay] [bx by]]
+  [(+ ax bx) (+ ay by)])
+
+(defn vec-sub [[ax ay] [bx by]]
+  [(- ax bx) (- ay by)])
+
+(defn vec-mag [[ax ay]]
+  (Math/sqrt (+ (* ax ax) (* ay ay))))
+
+(defn vec-scale [[ax ay] scale]
+  [(* ax scale) (* ay scale)])
+
+(defn vec-unit [v]
+  (let [mag (vec-mag v)]
+    (if (> mag 0)
+      (vec-scale v (/ (vec-mag v)))
+      [0 0])))
+
+(defn vec-negate [[ax ay]]
+  [(- ax) (- ay)])
+
+(defn update-viewport-position []
+  ;; try to keep the player character basically centered
+  (let [[vx vy vw vh] *viewport*
+        vc (vec-add [vx vy] (vec-scale [vw vh] 0.5))
+        displacement (vec-sub *guy-position* vc)
+
+        ;; compute the spring force vector
+        mag-displacement (vec-mag displacement)
+        spring-force-mag (if (> mag-displacement +viewport-max-displacement+)
+                           (* (- mag-displacement +viewport-max-displacement+)
+                              +viewport-spring-constant+)
+                           0)
+        spring-force (vec-scale (vec-unit displacement) spring-force-mag)
+
+        ;; compute the drag force vector
+        mag-velocity (vec-mag *viewport-velocity*)
+        drag-force (vec-scale (vec-negate (vec-unit *viewport-velocity*))
+                              (* mag-velocity +viewport-spring-constant+))
+        
+        force (vec-add spring-force drag-force)
+        acc (vec-scale force (/ +viewport-mass+))
+        vel (vec-add *viewport-velocity* (vec-scale acc +secs-per-tick+))
+        pos (vec-add [vx vy] (vec-scale vel +secs-per-tick+))]
+    
+    (viewport-offset pos)
+    (set! *viewport-velocity* vel)))
+
+(defn tick []
+  (update-guy-keyboard)
+  (update-viewport-position))
 
 (defn ^:export main []
   (dom/setTextContent (content) "")
