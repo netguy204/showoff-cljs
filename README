@@ -1,13 +1,17 @@
-# showoff
+# showoff-cljs
 
-FIXME: write description
+A "Game Library" written in Clojurescript. It's not meant to be
+general. It's not meant to be modular. It's meant to be a collection
+of things that I thought would be useful for LD23.
 
 ## Usage
 
-FIXME: write
+Call functions. See results.
+
+ See code for functions. See examples for results.
 
 ## License
 
-Copyright (C) 2012 FIXME
+Copyright (C) 2012 Brian Taylor
 
 Distributed under the Eclipse Public License, the same as Clojure.
