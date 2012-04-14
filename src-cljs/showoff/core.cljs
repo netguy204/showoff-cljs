@@ -228,76 +228,8 @@ space taking into account the current viewport"
 (def *remaining-time* 0)
 (def +ticks-per-ms+ (/ 30 1000))
 (def +secs-per-tick+ (/ 30))
-(def *guy-position* [1 1])
 (def *guy-sprite* (get-img "sprites/guy.png"))
 (def *hud-sprite* (get-img "hud/hud.png"))
-
-(defn draw-hud []
-  (let [[w h] (img-dims *hud-sprite*)
-        [sw sh] *world-dims*]
-    (.drawImage (context) *hud-sprite*
-                0 0 w h
-                0 0 sw sh)))
-(defn draw []
-  (clear)
-  (draw-map *current-map*)
-  (draw-sprite (context) *guy-sprite* *guy-position*)
-  (draw-hud))
-
-(defn tick []
-  (update-guy-keyboard)
-  (update-viewport-position))
-
-(defn cycle []
-  (let [now (goog/now)
-        dtms (+ (- now *last-time*) *remaining-time*)
-        ticks (Math/floor (* +ticks-per-ms+ dtms))
-        leftover (- dtms (/ ticks +ticks-per-ms+))]
-    
-    (set! *last-time* now)
-    (set! *remaining-time* leftover)
-    
-    (loop [ii 0]
-      (tick)
-      (when (< ii ticks)
-        (recur (inc ii))))
-    (tick ticks)
-
-    (draw)
-
-    true))
-
-(defn- update-viewport-keyboard []
-  (let [[vx vy] (viewport-offset)
-        csm *command-state-map*
-        step 0.2]
-    (when (csm (.-LEFT gevents/KeyCodes))
-      (viewport-offset [(- vx step) vy]))
-
-    (when (csm (.-RIGHT gevents/KeyCodes))
-      (viewport-offset [(+ vx step) vy]))
-
-    (when (csm (.-UP gevents/KeyCodes))
-      (viewport-offset [vx (- vy step)]))
-
-    (when (csm (.-DOWN gevents/KeyCodes))
-      (viewport-offset [vx (+ vy step)]))))
-
-(defn- update-guy-keyboard []
-    (let [[x y] *guy-position*
-        csm *command-state-map*
-        step 0.05]
-    (when (csm (.-LEFT gevents/KeyCodes))
-      (set! *guy-position* [(- x step) y]))
-
-    (when (csm (.-RIGHT gevents/KeyCodes))
-      (set! *guy-position* [(+ x step) y]))
-
-    (when (csm (.-UP gevents/KeyCodes))
-      (set! *guy-position* [x (- y step)]))
-
-    (when (csm (.-DOWN gevents/KeyCodes))
-      (set! *guy-position* [x (+ y step)]))))
 
 (def *viewport-velocity* [0 0])
 (def +viewport-spring-constant+ 3)
@@ -361,26 +293,37 @@ space taking into account the current viewport"
 
    ;; try to keep the player character basically centered
    :force-generators
-   [(fn [p] (spring-force (vec-sub *guy-position* (rect-center *viewport*))
+   [(fn [p] (spring-force (vec-sub (:position *guy-particle*) (rect-center *viewport*))
                           +viewport-max-displacement+
                           +viewport-spring-constant+))
     (drag-force-generator +viewport-drag-coefficient+)]})
 
+(def *guy-particle*
+  {:mass 1
+   :position [3 3]
+   :velocity [0 0]
+
+   ;; keyboard controls this particle
+   :velocity-generators
+   [(keyboard-velocity-generator (.-LEFT gevents/KeyCodes) [-1 0])
+    (keyboard-velocity-generator (.-RIGHT gevents/KeyCodes) [1 0])
+    (keyboard-velocity-generator (.-UP gevents/KeyCodes) [0 -1])
+    (keyboard-velocity-generator (.-DOWN gevents/KeyCodes) [0 1])]})
+
+(defn accumulate-from-generators [p generators initial]
+  (reduce (fn [result func] (vec-add result (func p)))
+          initial
+          generators))
+
 (defn integrate-particle [p]
-  (let [force (reduce (fn [force func] (vec-add force (func p)))
-                      [0 0]
-                      (:force-generators p))
+  (let [force (accumulate-from-generators p (:force-generators p) [0 0])
+        base-vel (accumulate-from-generators p (:velocity-generators p) (:velocity p))
         acc (vec-scale force (:mass p))
-        vel (vec-add (:velocity p) (vec-scale acc +secs-per-tick+))
+        vel (vec-add base-vel (vec-scale acc +secs-per-tick+))
         pos (vec-add (:position p) (vec-scale vel +secs-per-tick+))]
     
     (conj p {:position pos
              :velocity vel})))
-
-(defn update-viewport-position []
-  (let [new-viewport (integrate-particle *viewport-particle*)]
-    (viewport-offset (:position new-viewport))
-    (set! *viewport-particle* new-viewport)))
 
 (defn with-prepared-assets [callback]
   ;; a few assets we can resize lazily
@@ -411,6 +354,48 @@ space taking into account the current viewport"
                  {:kind :rect
                   :color [0 0 255]}})
           (callback))))))
+
+(defn update-viewport []
+  (let [new-viewport (integrate-particle *viewport-particle*)]
+    (viewport-offset (:position new-viewport))
+    (set! *viewport-particle* new-viewport)))
+
+(defn update-guy []
+  (set! *guy-particle* (integrate-particle *guy-particle*)))
+
+(defn draw-hud []
+  (let [[w h] (img-dims *hud-sprite*)
+        [sw sh] *world-dims*]
+    (.drawImage (context) *hud-sprite*
+                0 0 w h
+                0 0 sw sh)))
+(defn draw []
+  (clear)
+  (draw-map *current-map*)
+  (draw-sprite (context) *guy-sprite* (:position *guy-particle*))
+  (draw-hud))
+
+(defn tick []
+  (update-guy)
+  (update-viewport))
+
+(defn cycle []
+  (let [now (goog/now)
+        dtms (+ (- now *last-time*) *remaining-time*)
+        ticks (Math/floor (* +ticks-per-ms+ dtms))
+        leftover (- dtms (/ ticks +ticks-per-ms+))]
+    
+    (set! *last-time* now)
+    (set! *remaining-time* leftover)
+    
+    (loop [ii 0]
+      (tick)
+      (when (< ii ticks)
+        (recur (inc ii))))
+
+    (draw)
+
+    true))
 
 (defn ^:export main []
   (dom/setTextContent (content) "")
