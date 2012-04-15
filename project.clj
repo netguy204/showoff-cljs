@@ -18,7 +18,9 @@
      :compiler
      {:output-to "javascripts/compiled.js"
       :optimizations :advanced
-      :pretty-print true
+      :pretty-print false
+      :externs ["jukebox/src/Manager.js"
+                "jukebox/src/Player.js"]
       }
      :id "advanced"
      }

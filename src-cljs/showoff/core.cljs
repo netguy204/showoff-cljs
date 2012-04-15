@@ -21,6 +21,9 @@
 (def *tile-in-world-dims* [(/ 640 16) (/ 480 12)])
 
 (def *default-color* [255 0 255])
+(def *current-map* nil)
+(def *command-state-map* #{})
+(def *media-player* nil)
 
 (defn make-canvas [[w h]]
   (let [canvas (dom/createDom "canvas")]
@@ -28,10 +31,43 @@
     (set! (.-height canvas) h)
     canvas))
 
+
+;; borrowed from ibdknox/jayq
+(defn map->js [m]
+  (let [out (js-obj)]
+    (doseq [[k v] m]
+      (aset out (name k) v))
+    out))
+
+(defn clj->js
+  "Recursively transforms ClojureScript maps into Javascript objects,
+   other ClojureScript colls into JavaScript arrays, and ClojureScript
+   keywords into JavaScript strings."
+  [x]
+  (cond
+    (string? x) x
+    (keyword? x) (name x)
+    (map? x) (.-strobj (reduce (fn [m [k v]]
+                                 (assoc m (clj->js k) (clj->js v))) {} x))
+    (coll? x) (apply array (map clj->js x))
+    :else x))
+;; end jayq
+
+
 (defn prepare-display []
   (let [[w h] *world-dims*]
     (set! *display* (make-canvas [w h]))
     (dom/appendChild (content) *display*)))
+
+(defn prepare-sound []
+  (let [spec {:resources ["music/epica.mp3"]
+              :autoplay "bg-music"
+              :spritemap
+              {:bg-music
+               {:start 0.0
+                :end 122
+                :loop true}}}]
+    (set! *media-player* (jukebox.Player. (clj->js spec)))))
 
 (defn transform [[x y w h]]
   "convert from x y w h in tilespace to a position in visible screen
@@ -229,9 +265,6 @@ space taking into account the current viewport"
           (= (rec :kind) :image)
           (draw-sprite ctx (:image rec) [tx ty]))))))
 
-(def *current-map* nil)
-
-(def *command-state-map* #{})
 
 (defn- keydown [e]
   (set! *command-state-map* (conj *command-state-map* (.-keyCode e))))
@@ -452,23 +485,41 @@ space taking into account the current viewport"
       :else
       [0 0])))
 
+(defn ground-friction-generator [rect-gen coefficient]
+  (fn [p]
+    (cond
+      ;; not applicable if we're not standing on something
+      (not (supported-by-map *current-map* (rect-gen)))
+      [0 0]
+
+      ;; also not applicable if the player is trying to move
+      (or (*command-state-map* (.-LEFT gevents/KeyCodes))
+          (*command-state-map* (.-RIGHT gevents/KeyCodes)))
+      [0 0]
+      
+      ;; we're supported by the map, introduce drag in the horizontal
+      ;; direction
+      :else
+      (vec-scale [1 0] (* -1 coefficient (vec-dot [1 0] (:velocity p)))))))
+
 (defn guy-rect []
   (let [[x y] (:position *guy-particle*)]
     [(+ x 0.2) (+ y 0.1) 0.6 0.9]))
 
 (def *guy-particle*
   {:mass 1
-   :position [0 0]
+   :position [2 2]
    :velocity [0 0]
 
    ;; bring to a stop quickly
    :force-generators
    [(drag-force-generator 1)
+    (ground-friction-generator guy-rect 4)
     (gravity-force-generator 10)]
 
    :velocity-generators
    (conj (keyboard-direction-generators 0.2)
-         (jump-velocity-generator guy-rect 10))
+         (jump-velocity-generator guy-rect 3))
    })
 
 (defn accumulate-from-generators [p generators initial]
@@ -554,7 +605,7 @@ space taking into account the current viewport"
    (apply-particle-vs-map (integrate-particle *guy-particle*)
                           *current-map*
                           (guy-rect)
-                          0.3)))
+                          0.1)))
 
 (defn draw-hud []
   (let [[w h] (img-dims *hud-sprite*)
@@ -585,6 +636,7 @@ space taking into account the current viewport"
   (update-viewport))
 
 (defn cycle []
+  
   (let [now (goog/now)
         dtms (+ (- now *last-time*) *remaining-time*)
         ticks (Math/floor (* +ticks-per-ms+ dtms))
@@ -608,6 +660,7 @@ space taking into account the current viewport"
   (dom/setTextContent (content) "")
   (prepare-display)
   (prepare-input)
+  (prepare-sound)
   
   (with-prepared-assets
     (fn []
