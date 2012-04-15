@@ -282,34 +282,6 @@ space taking into account the current viewport"
 (defn vec-dot [[ax ay] [bx by]]
   (+ (* ax bx) (* ay by)))
 
-;; a force generator function produces a function that takes a
-;; particle and returns a force
-(defn drag-force-generator [drag-coefficient]
-  (fn [p]
-    (let [vel (:velocity p)
-          mag-velocity (vec-mag vel)
-          drag-dir (vec-negate (vec-unit vel))]
-      (vec-scale drag-dir (* mag-velocity drag-coefficient)))))
-
-(defn gravity-force-generator [g]
-  (fn [p]
-    [0 (* (:mass p) g)]))
-
-(defn spring-force [displacement max-displacement spring-constant]
-  (let [mag-displacement (vec-mag displacement)
-        diff (- mag-displacement max-displacement)]
-    (if (> mag-displacement max-displacement)
-      (vec-scale (vec-unit displacement) (* spring-constant diff))
-      [0 0])))
-
-;; a velocity generator function produces a function that takes a
-;; particle and returns a velocity
-(defn keyboard-velocity-generator [keycode value]
-  (fn [p]
-    (if (*command-state-map* keycode)
-      value
-      [0 0])))
-
 (defn rect-center [rect]
   (let [[vx vy vw vh] rect]
     (vec-add [vx vy] (vec-scale [vw vh] 0.5))))
@@ -338,95 +310,8 @@ space taking into account the current viewport"
         (< amaxy bminy)
         (> aminy bmaxy)))))
 
-(def +viewport-spring-constant+ 20)
-(def +viewport-drag-coefficient+ 8)
-(def +viewport-max-displacement+ 2)
-
-(def *viewport-particle*
-  {:mass 1
-   :position [0 0]
-   :velocity [0 0]
-
-   ;; try to keep the player character basically centered
-   :force-generators
-   [(fn [p] (spring-force (vec-sub (:position *guy-particle*)
-                                   (vec-sub (rect-center *viewport*)
-                                            [0 1]))
-                          +viewport-max-displacement+
-                          +viewport-spring-constant+))
-    (drag-force-generator +viewport-drag-coefficient+)]})
-
-(defn keyboard-direction-generators [scale]
-  [(keyboard-velocity-generator (.-LEFT gevents/KeyCodes) [(- scale) 0])
-   (keyboard-velocity-generator (.-RIGHT gevents/KeyCodes) [scale 0])
-   (keyboard-velocity-generator (.-UP gevents/KeyCodes) [0 (- scale)])
-   (keyboard-velocity-generator (.-DOWN gevents/KeyCodes) [0 scale])])
-
-(def *guy-particle*
-  {:mass 1
-   :position [0 0]
-   :velocity [0 0]
-
-   ;; bring to a stop quickly
-   :force-generators
-   [(drag-force-generator 6)
-    (gravity-force-generator 20)]
-
-   :velocity-generators
-   (keyboard-direction-generators 1)
-   
-   })
-
-(defn guy-rect []
-  (let [[x y] (:position *guy-particle*)]
-    [(+ x 0.2) (+ y 0.1) 0.6 0.9]))
-
-(defn accumulate-from-generators [p generators initial]
-  (reduce (fn [result func] (vec-add result (func p)))
-          initial
-          generators))
-
-(defn integrate-particle [p]
-  (let [force (accumulate-from-generators p (:force-generators p) [0 0])
-        base-vel (accumulate-from-generators p (:velocity-generators p) (:velocity p))
-        base-pos (accumulate-from-generators p (:offset-generators p) (:position p))
-        acc (vec-scale force (:mass p))
-        vel (vec-add base-vel (vec-scale acc +secs-per-tick+))
-        pos (vec-add base-pos (vec-scale vel +secs-per-tick+))]
-    
-    (conj p {:position pos
-             :velocity vel})))
-
-(defn with-prepared-assets [callback]
-  ;; a few assets we can resize lazily
-  (with-img "hud/hud.png"
-    (fn [hud]
-      (set! *hud-sprite* (resize-nearest-neighbor hud *world-dims*))))
-
-  (with-img "sprites/guy.png"
-    (fn [guy]
-      (set! *guy-sprite* (resize-nearest-neighbor guy *tile-in-world-dims*))))
-  
-  ;; its critical that +map-symbols+ be built before callback is
-  ;; invoked
-  (with-img "sprites/air.png"
-    (fn [air]
-      (with-img "sprites/dirt.png"
-        (fn [dirt]
-          (set! +map-symbols+
-                {[255 255 255]
-                 {:kind :image
-                  :image (resize-nearest-neighbor air *tile-in-world-dims*)}
-                 
-                 [255 0 0]
-                 {:kind :image
-                  :image (resize-nearest-neighbor dirt *tile-in-world-dims*)
-                  :collidable true}
-                     
-                 [0 0 255]
-                 {:kind :rect
-                  :color [0 0 255]}})
-          (callback))))))
+(defn rect-offset [[rx ry rw rh] [ox oy]]
+  [(+ rx ox) (+ ry oy) rw rh])
 
 (defn map-collisions [map rect]
   (filter
@@ -495,6 +380,144 @@ space taking into account the current viewport"
           {:normal (vec-unit [1 1])
            :incursion (vec-mag [ho vo])})))))
 
+;; a force generator function produces a function that takes a
+;; particle and returns a force
+(defn drag-force-generator [drag-coefficient]
+  (fn [p]
+    (let [vel (:velocity p)
+          mag-velocity (vec-mag vel)
+          drag-dir (vec-negate (vec-unit vel))]
+      (vec-scale drag-dir (* mag-velocity drag-coefficient)))))
+
+(defn gravity-force-generator [g]
+  (fn [p]
+    [0 (* (:mass p) g)]))
+
+(defn spring-force [displacement max-displacement spring-constant]
+  (let [mag-displacement (vec-mag displacement)
+        diff (- mag-displacement max-displacement)]
+    (if (> mag-displacement max-displacement)
+      (vec-scale (vec-unit displacement) (* spring-constant diff))
+      [0 0])))
+
+;; a velocity generator function produces a function that takes a
+;; particle and returns a velocity
+(defn keyboard-velocity-generator [keycode value]
+  (fn [p]
+    (if (*command-state-map* keycode)
+      value
+      [0 0])))
+
+(def +viewport-spring-constant+ 20)
+(def +viewport-drag-coefficient+ 8)
+(def +viewport-max-displacement+ 2)
+
+(def *viewport-particle*
+  {:mass 1
+   :position [0 0]
+   :velocity [0 0]
+
+   ;; try to keep the player character basically centered
+   :force-generators
+   [(fn [p] (spring-force (vec-sub (:position *guy-particle*)
+                                   (vec-sub (rect-center *viewport*)
+                                            [0 1]))
+                          +viewport-max-displacement+
+                          +viewport-spring-constant+))
+    (drag-force-generator +viewport-drag-coefficient+)]})
+
+(defn keyboard-direction-generators [scale]
+  [(keyboard-velocity-generator (.-LEFT gevents/KeyCodes) [(- scale) 0])
+   (keyboard-velocity-generator (.-RIGHT gevents/KeyCodes) [scale 0])])
+
+(defn supported-by-map [map rect]
+  (let [[rx ry rw rh] rect
+        half-width (* 0.5 rw)
+        maxy (+ ry rh)
+        test-rect [(+ rx (* 0.5 half-width)) maxy half-width 0.1]]
+    (not (empty? (map-collisions map test-rect)))))
+
+(defn jump-velocity-generator [rect-gen up-vel]
+  (fn [p]
+    (cond
+      ;; not trying to jump
+      (not (*command-state-map* (.-UP gevents/KeyCodes)))
+      [0 0]
+
+      ;; trying to jump and surface underfoot
+      (supported-by-map *current-map* (rect-gen))
+      [0 (- up-vel)]
+
+      ;; can't jump, we're not supported
+      :else
+      [0 0])))
+
+(defn guy-rect []
+  (let [[x y] (:position *guy-particle*)]
+    [(+ x 0.2) (+ y 0.1) 0.6 0.9]))
+
+(def *guy-particle*
+  {:mass 1
+   :position [0 0]
+   :velocity [0 0]
+
+   ;; bring to a stop quickly
+   :force-generators
+   [(drag-force-generator 1)
+    (gravity-force-generator 10)]
+
+   :velocity-generators
+   (conj (keyboard-direction-generators 0.2)
+         (jump-velocity-generator guy-rect 10))
+   })
+
+(defn accumulate-from-generators [p generators initial]
+  (reduce (fn [result func] (vec-add result (func p)))
+          initial
+          generators))
+
+(defn integrate-particle [p]
+  (let [force (accumulate-from-generators p (:force-generators p) [0 0])
+        base-vel (accumulate-from-generators p (:velocity-generators p) (:velocity p))
+        base-pos (accumulate-from-generators p (:offset-generators p) (:position p))
+        acc (vec-scale force (:mass p))
+        vel (vec-add base-vel (vec-scale acc +secs-per-tick+))
+        pos (vec-add base-pos (vec-scale vel +secs-per-tick+))]
+    
+    (conj p {:position pos
+             :velocity vel})))
+
+(defn with-prepared-assets [callback]
+  ;; a few assets we can resize lazily
+  (with-img "hud/hud.png"
+    (fn [hud]
+      (set! *hud-sprite* (resize-nearest-neighbor hud *world-dims*))))
+
+  (with-img "sprites/guy.png"
+    (fn [guy]
+      (set! *guy-sprite* (resize-nearest-neighbor guy *tile-in-world-dims*))))
+  
+  ;; its critical that +map-symbols+ be built before callback is
+  ;; invoked
+  (with-img "sprites/air.png"
+    (fn [air]
+      (with-img "sprites/dirt.png"
+        (fn [dirt]
+          (set! +map-symbols+
+                {[255 255 255]
+                 {:kind :image
+                  :image (resize-nearest-neighbor air *tile-in-world-dims*)}
+                 
+                 [255 0 0]
+                 {:kind :image
+                  :image (resize-nearest-neighbor dirt *tile-in-world-dims*)
+                  :collidable true}
+                     
+                 [0 0 255]
+                 {:kind :rect
+                  :color [0 0 255]}})
+          (callback))))))
+
 (defn update-viewport []
   (let [new-viewport (integrate-particle *viewport-particle*)]
     (viewport-offset (:position new-viewport))
@@ -517,10 +540,11 @@ space taking into account the current viewport"
             vel (:velocity p)
             newpos (vec-add pos (vec-scale (:normal max-contact)
                                            (:incursion max-contact)))
-            newvel (vec-sub vel (vec-scale (:normal max-contact)
+            newvel (vec-add vel (vec-scale (:normal max-contact)
                                            (* (+ 1 restitution)
-                                              (vec-dot (:normal max-contact)
-                                                       vel))))]
+                                              (Math/abs
+                                               (vec-dot (:normal max-contact)
+                                                        vel)))))]
         (conj p {:position newpos
                  :velocity newvel})))))
 
