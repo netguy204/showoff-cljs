@@ -204,6 +204,13 @@ space taking into account the current viewport"
     [(mod idx mw)
      (Math/floor (/ idx mw))]))
 
+(defn idx->rect [map idx]
+  (let [[mw _] (:dims map)]
+    [(mod idx mw)
+     (Math/floor (/ idx mw))
+     1
+     1]))
+
 (defn draw-map [map]
   (let [[mw _] (:dims map)
         ctx (context)]
@@ -492,22 +499,29 @@ space taking into account the current viewport"
     (viewport-offset (:position new-viewport))
     (set! *viewport-particle* new-viewport)))
 
+(defn idxrect-contact [map idx rect]
+  (rectrect-contact rect (idx->rect map idx)))
+
 (defn apply-particle-vs-map [p map rect restitution]
-  (reduce
-   (fn [p idx]
-     (let [[tx ty] (idx->coords map idx)
-           tilerect [tx ty 1 1]
-           contact (rectrect-contact rect tilerect)
-           pos (:position p)
-           vel (:velocity p)
-           newpos (vec-add pos (vec-scale (:normal contact) (:incursion contact)))
-           newvel (vec-sub vel (vec-scale (:normal contact) (* (+ 1 restitution)
-                                                               (vec-dot (:normal contact)
-                                                                        vel))))]
-       (conj p {:position newpos
-                :velocity newvel})))
-   p
-   (map-collisions map rect)))
+  (let [contacts (for [idx (map-collisions map rect)]
+                   (idxrect-contact map idx rect))
+        temp (into [] contacts)]
+    (if (empty? contacts)
+      p
+      (let [max-contact (reduce #(if (> (:incursion %1) (:incursion %2))
+                                   %1
+                                   %2)
+                                contacts)
+            pos (:position p)
+            vel (:velocity p)
+            newpos (vec-add pos (vec-scale (:normal max-contact)
+                                           (:incursion max-contact)))
+            newvel (vec-sub vel (vec-scale (:normal max-contact)
+                                           (* (+ 1 restitution)
+                                              (vec-dot (:normal max-contact)
+                                                       vel))))]
+        (conj p {:position newpos
+                 :velocity newvel})))))
 
 (defn update-guy []
   (set!
