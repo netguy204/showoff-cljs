@@ -15,7 +15,7 @@
   (by-id "content"))
 
 (def ^:dynamic *display* nil)
-(def ^:dynamic *viewport* [0 0 16 12]) ;; expressed in tiles
+(def ^:dynamic *viewport* [0 0 16 10]) ;; expressed in tiles
 (def ^:dynamic *world-dims* [640 480]) ;; expressed in pixels
 (def ^:dynamic *tile-dims* [8 8])
 (def *tile-in-world-dims* [(/ 640 16) (/ 480 12)])
@@ -38,8 +38,7 @@
 space taking into account the current viewport"
   (let [[vx vy vw vh] *viewport*
         [sw sh] *world-dims*
-        twpx (/ sw vw)
-        thpx (/ sh vh)]
+        [twpx thpx] *tile-in-world-dims*]
     
     [(Math/floor (* (- x vx) twpx))
      (Math/floor (* (- y vy) thpx))
@@ -350,7 +349,9 @@ space taking into account the current viewport"
 
    ;; try to keep the player character basically centered
    :force-generators
-   [(fn [p] (spring-force (vec-sub (:position *guy-particle*) (rect-center *viewport*))
+   [(fn [p] (spring-force (vec-sub (:position *guy-particle*)
+                                   (vec-sub (rect-center *viewport*)
+                                            [0 1]))
                           +viewport-max-displacement+
                           +viewport-spring-constant+))
     (drag-force-generator +viewport-drag-coefficient+)]})
