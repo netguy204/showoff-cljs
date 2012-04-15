@@ -5,7 +5,8 @@
             (goog.events :as gevents)
             (goog.Timer :as timer)
             (goog.events.KeyHandler :as geventskey)
-            (clojure.browser.event :as event)))
+            (clojure.browser.event :as event)
+            (clojure.browser.repl :as repl)))
 
 (defn by-id [id]
   (dom/getElement id))
@@ -169,38 +170,58 @@ space taking into account the current viewport"
     :dims dims
     :data data}))
 
+(defn get-map-idx [map idx]
+  (let [data (:data map)]
+    (nth data idx)))
+
 (defn get-map-data [map x y]
-  (let [[w h] (:dims map)
-        data (:data map)]
+  (let [[w h] (:dims map)]
     (when (and (>= x 0) (>= y 0) (< x w) (< y h))
-      (nth data (+ x (* y w))))))
+      (get-map-idx map (+ x (* y w))))))
+
+(defn rect->idxs-all [map rect]
+  (let [[rx ry rw rh] rect
+        [mw mh] (:dims map)
+        rngx (- (Math/ceil (+ rw rx))
+                (Math/floor rx))
+        rngy (- (Math/ceil (+ rh ry))
+                (Math/floor ry))
+        ox (Math/floor rx)
+        oy (Math/floor ry)]
+
+    (for [ix (range rngx)
+          iy (range rngy)]
+      (let [x (+ ox ix)
+            y (+ oy iy)]
+        (when (and (>= x 0) (>= y 0) (< x mw) (< y mh))
+          (+ x (* y mw)))))))
+
+(defn rect->idxs [map rect]
+  (filter (fn [idx] (not (nil? idx))) (rect->idxs-all map rect)))
+
+(defn idx->coords [map idx]
+  (let [[mw _] (:dims map)]
+    [(mod idx mw)
+     (Math/floor (/ idx mw))]))
 
 (defn draw-map [map]
-  (let [[vx vy vw vh] *viewport*
+  (let [[mw _] (:dims map)
         ctx (context)]
 
-    (doseq [x (range vw)
-            y (range vh)]
-      (let [rx (+ x vx)
-            ry (+ y vy)
-            [sw sh] *tile-dims*
-            frx (Math/round rx)
-            fry (Math/round ry)
-            drx (- frx rx)
-            dry (- fry ry)
-            rec (get-map-data map frx fry)
-            sx (+ rx drx)
-            sy (+ ry dry)]
+    (doseq [idx (rect->idxs map *viewport*)]
+      (let [tx (mod idx mw)
+            ty (Math/floor (/ idx mw))
+            rec (get-map-idx map idx)]
         (cond
           (nil? rec)
-          (filled-rect ctx [sx sy] [1 1] (color *default-color*))
+          (filled-rect ctx [tx ty] [1 1] (color *default-color*))
           
           (= (rec :kind) :rect)
-          (filled-rect ctx [sx sy] [1 1]
+          (filled-rect ctx [tx ty] [1 1]
                        (color (rec :color)))
-
+          
           (= (rec :kind) :image)
-          (draw-sprite ctx (:image rec) [sx sy]))))))
+          (draw-sprite ctx (:image rec) [tx ty]))))))
 
 (def *current-map* nil)
 
@@ -258,6 +279,9 @@ space taking into account the current viewport"
 (defn vec-negate [[ax ay]]
   [(- ax) (- ay)])
 
+(defn vec-dot [[ax ay] [bx by]]
+  (+ (* ax bx) (* ay by)))
+
 ;; a force generator function produces a function that takes a
 ;; particle and returns a force
 (defn drag-force-generator [drag-coefficient]
@@ -286,6 +310,30 @@ space taking into account the current viewport"
   (let [[vx vy vw vh] rect]
     (vec-add [vx vy] (vec-scale [vw vh] 0.5))))
 
+(defn rect-minx [[ax _ _ _]]
+  ax)
+
+(defn rect-maxx [[ax _ aw _]]
+  (+ ax aw))
+
+(defn rect-miny [[_ ay _ _]]
+  ay)
+
+(defn rect-maxy [[_ ay _ ah]]
+  (+ ay ah))
+
+(defn rect-minmax [[ax ay aw ah]]
+  [ax ay (+ ax aw) (+ ay ah)])
+
+(defn rect-intersect [a b]
+  (let [[aminx aminy amaxx amaxy] (rect-minmax a)
+        [bminx bminy bmaxx bmaxy] (rect-minmax b)]
+   (not
+    (or (< amaxx bminx)
+        (> aminx bmaxx)
+        (< amaxy bminy)
+        (> aminy bmaxy)))))
+
 (def *viewport-particle*
   {:mass 1
    :position [0 0]
@@ -298,17 +346,29 @@ space taking into account the current viewport"
                           +viewport-spring-constant+))
     (drag-force-generator +viewport-drag-coefficient+)]})
 
+(defn keyboard-direction-generators [scale]
+  [(keyboard-velocity-generator (.-LEFT gevents/KeyCodes) [(- scale) 0])
+   (keyboard-velocity-generator (.-RIGHT gevents/KeyCodes) [scale 0])
+   (keyboard-velocity-generator (.-UP gevents/KeyCodes) [0 (- scale)])
+   (keyboard-velocity-generator (.-DOWN gevents/KeyCodes) [0 scale])])
+
 (def *guy-particle*
   {:mass 1
-   :position [3 3]
+   :position [0 0]
    :velocity [0 0]
 
-   ;; keyboard controls this particle
+   ;; bring to a stop quickly
+   :force-generators
+   [(drag-force-generator 10)]
+
    :velocity-generators
-   [(keyboard-velocity-generator (.-LEFT gevents/KeyCodes) [-1 0])
-    (keyboard-velocity-generator (.-RIGHT gevents/KeyCodes) [1 0])
-    (keyboard-velocity-generator (.-UP gevents/KeyCodes) [0 -1])
-    (keyboard-velocity-generator (.-DOWN gevents/KeyCodes) [0 1])]})
+   (keyboard-direction-generators 1)
+   
+   })
+
+(defn guy-rect []
+  (let [[x y] (:position *guy-particle*)]
+    [(+ x 0.2) (+ y 0.1) 0.6 0.9]))
 
 (defn accumulate-from-generators [p generators initial]
   (reduce (fn [result func] (vec-add result (func p)))
@@ -318,9 +378,10 @@ space taking into account the current viewport"
 (defn integrate-particle [p]
   (let [force (accumulate-from-generators p (:force-generators p) [0 0])
         base-vel (accumulate-from-generators p (:velocity-generators p) (:velocity p))
+        base-pos (accumulate-from-generators p (:offset-generators p) (:position p))
         acc (vec-scale force (:mass p))
         vel (vec-add base-vel (vec-scale acc +secs-per-tick+))
-        pos (vec-add (:position p) (vec-scale vel +secs-per-tick+))]
+        pos (vec-add base-pos (vec-scale vel +secs-per-tick+))]
     
     (conj p {:position pos
              :velocity vel})))
@@ -348,20 +409,110 @@ space taking into account the current viewport"
                  
                  [255 0 0]
                  {:kind :image
-                  :image (resize-nearest-neighbor dirt *tile-in-world-dims*)}
+                  :image (resize-nearest-neighbor dirt *tile-in-world-dims*)
+                  :collidable true}
                      
                  [0 0 255]
                  {:kind :rect
                   :color [0 0 255]}})
           (callback))))))
 
+(defn map-collisions [map rect]
+  (filter
+   (fn [res] (not (nil? res)))
+   (for [idx (rect->idxs map rect)]
+     (let [rec (get-map-idx map idx)]
+       (when (:collidable rec) idx)))))
+
+(defn rectrect-horizontal-overlap [r1 r2]
+  "assumes that there is some overlap"
+  (let [[r1x _ r1w _] r1
+        [r2x _ r2w _] r2]
+    (- (min (+ r1x r1w)
+            (+ r2x r2w))
+       (max r1x r2x))))
+
+(defn rectrect-vertical-overlap [r1 r2]
+  "assuems that there is some overlap"
+  (let [[_ r1y _ r1h] r1
+        [_ r2y _ r2h] r2]
+    (- (min (+ r1y r1h)
+            (+ r2y r2h))
+       (max r1y r2y))))
+
+(defn rectrect-contact [r1 r2]
+  "assumes that r1 and r2 intersect, normal will push r1 from r2"
+  (let [ho (rectrect-horizontal-overlap r1 r2)
+        vo (rectrect-vertical-overlap r1 r2)]
+    (cond
+      ;; horizontal violation
+      (> vo ho)
+      (if (< (rect-minx r1) (rect-minx r2))
+        {:normal [-1 0]
+         :incursion ho}
+        {:normal [1 0]
+         :incursion ho})
+
+      ;; vertical violation
+      (> ho vo)
+      (if (< (rect-miny r1) (rect-miny r2))
+        {:normal [0 -1]
+         :incursion vo} 
+        {:normal [0 1]
+         :incursion vo})
+
+      ;; corner-shot
+      :else
+      (cond
+        ;; left side
+        (< (rect-minx r1) (rect-minx r2))
+        (if (< (rect-miny r1) (rect-maxy r2))
+          ;; top-left corner
+          {:normal (vec-unit [-1 -1])
+           :incursion (vec-mag [ho vo])} 
+          ;; bottom-left corner
+          {:normal (vec-unit [-1 1])
+           :incursion (vec-mag [ho vo])})
+
+        ;; right side
+        :else
+        (if (< (rect-miny r1) (rect-maxy r2))
+          ;; top-right corner
+          {:normal (vec-unit [1 -1])
+           :incursion (vec-mag [ho vo])} 
+          ;; bottom-right corner
+          {:normal (vec-unit [1 1])
+           :incursion (vec-mag [ho vo])})))))
+
 (defn update-viewport []
   (let [new-viewport (integrate-particle *viewport-particle*)]
     (viewport-offset (:position new-viewport))
     (set! *viewport-particle* new-viewport)))
 
+(defn apply-particle-vs-map [p map rect restitution]
+  (reduce
+   (fn [p idx]
+     (let [[tx ty] (idx->coords map idx)
+           tilerect [tx ty 1 1]
+           contact (rectrect-contact rect tilerect)
+           pos (:position p)
+           vel (:velocity p)
+           newpos (vec-add pos (vec-scale (:normal contact) (:incursion contact)))
+           newvel (vec-add vel (vec-scale (:normal contact) (* (+ 1 restitution)
+                                                               (vec-dot (:normal contact)
+                                                                        vel))))]
+       (conj p {:position newpos
+                :velocity vel})))
+   p
+   (map-collisions map rect)))
+
 (defn update-guy []
-  (set! *guy-particle* (integrate-particle *guy-particle*)))
+  (set!
+   *guy-particle*
+   (apply-particle-vs-map (integrate-particle *guy-particle*)
+                          *current-map*
+                          (guy-rect)
+                          0.3)))
 
 (defn draw-hud []
   (let [[w h] (img-dims *hud-sprite*)
@@ -369,9 +520,21 @@ space taking into account the current viewport"
     (.drawImage (context) *hud-sprite*
                 0 0 w h
                 0 0 sw sh)))
+
+(defn draw-guy-tile-test []
+  (let [ctx (context)]
+    (doseq [idx (rect->idxs *current-map* (guy-rect))]
+      (let [xy (idx->coords *current-map* idx)]
+        (filled-rect ctx xy [1 1] (color [255 0 255]))))))
+
+(defn draw-guy-collision-test []
+  (doseq [idx (map-collisions *current-map* (guy-rect))]
+    (filled-rect (context) (idx->coords *current-map* idx) [1 1] (color [255 0 255]))))
+
 (defn draw []
   (clear)
   (draw-map *current-map*)
+  (draw-guy-collision-test)
   (draw-sprite (context) *guy-sprite* (:position *guy-particle*))
   (draw-hud))
 
@@ -398,6 +561,8 @@ space taking into account the current viewport"
     true))
 
 (defn ^:export main []
+  (repl/connect "http://localhost:9000/repl")
+  
   (dom/setTextContent (content) "")
   (prepare-display)
   (prepare-input)
