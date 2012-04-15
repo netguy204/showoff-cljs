@@ -41,10 +41,10 @@ space taking into account the current viewport"
         twpx (/ sw vw)
         thpx (/ sh vh)]
     
-    [(* (- x vx) twpx)
-     (* (- y vy) thpx)
-     (* w twpx)
-     (* h thpx)]))
+    [(Math/floor (* (- x vx) twpx))
+     (Math/floor (* (- y vy) thpx))
+     (Math/floor (* w twpx))
+     (Math/floor (* h thpx))]))
 
 (defn viewport-offset
   ([] (let [[x y _ _] *viewport*]
@@ -252,12 +252,6 @@ space taking into account the current viewport"
 (def *guy-sprite* (get-img "sprites/guy.png"))
 (def *hud-sprite* (get-img "hud/hud.png"))
 
-(def *viewport-velocity* [0 0])
-(def +viewport-spring-constant+ 3)
-(def +viewport-drag-coefficient+ 1)
-(def +viewport-mass+ 1)
-(def +viewport-max-displacement+ 1)
-
 (defn vec-add [[ax ay] [bx by]]
   [(+ ax bx) (+ ay by)])
 
@@ -290,6 +284,10 @@ space taking into account the current viewport"
           mag-velocity (vec-mag vel)
           drag-dir (vec-negate (vec-unit vel))]
       (vec-scale drag-dir (* mag-velocity drag-coefficient)))))
+
+(defn gravity-force-generator [g]
+  (fn [p]
+    [0 (* (:mass p) g)]))
 
 (defn spring-force [displacement max-displacement spring-constant]
   (let [mag-displacement (vec-mag displacement)
@@ -334,6 +332,10 @@ space taking into account the current viewport"
         (< amaxy bminy)
         (> aminy bmaxy)))))
 
+(def +viewport-spring-constant+ 20)
+(def +viewport-drag-coefficient+ 8)
+(def +viewport-max-displacement+ 2)
+
 (def *viewport-particle*
   {:mass 1
    :position [0 0]
@@ -359,7 +361,8 @@ space taking into account the current viewport"
 
    ;; bring to a stop quickly
    :force-generators
-   [(drag-force-generator 10)]
+   [(drag-force-generator 6)
+    (gravity-force-generator 20)]
 
    :velocity-generators
    (keyboard-direction-generators 1)
@@ -498,11 +501,11 @@ space taking into account the current viewport"
            pos (:position p)
            vel (:velocity p)
            newpos (vec-add pos (vec-scale (:normal contact) (:incursion contact)))
-           newvel (vec-add vel (vec-scale (:normal contact) (* (+ 1 restitution)
+           newvel (vec-sub vel (vec-scale (:normal contact) (* (+ 1 restitution)
                                                                (vec-dot (:normal contact)
                                                                         vel))))]
        (conj p {:position newpos
-                :velocity vel})))
+                :velocity newvel})))
    p
    (map-collisions map rect)))
 
@@ -561,7 +564,7 @@ space taking into account the current viewport"
     true))
 
 (defn ^:export main []
-  (repl/connect "http://localhost:9000/repl")
+  ;;(repl/connect "http://localhost:9000/repl")
   
   (dom/setTextContent (content) "")
   (prepare-display)
