@@ -60,7 +60,8 @@
     (dom/appendChild (content) *display*)))
 
 (defn prepare-sound []
-  (let [spec {:resources ["music/epica.mp3"]
+  (let [spec {:resources ["music/epica.ogg"
+                          "music/epica.mp3"]
               :autoplay "bg-music"
               :spritemap
               {:bg-music
@@ -498,9 +499,14 @@ space taking into account the current viewport"
       [0 0]
       
       ;; we're supported by the map, introduce drag in the horizontal
-      ;; direction
+      ;; direction.
       :else
-      (vec-scale [1 0] (* -1 coefficient (vec-dot [1 0] (:velocity p)))))))
+      (let [xvel (vec-dot [1 0] (:velocity p))]
+        (if (< (Math/abs xvel) 0.01)
+          ;; stop us completely if we're not moving very fast
+          (vec-scale [1 0] (- xvel))
+          ;; otherwise slowdown by our factor
+          (vec-scale [1 0] (* -1 coefficient xvel)))))))
 
 (defn guy-rect []
   (let [[x y] (:position *guy-particle*)]
@@ -536,7 +542,8 @@ space taking into account the current viewport"
         pos (vec-add base-pos (vec-scale vel +secs-per-tick+))]
     
     (conj p {:position pos
-             :velocity vel})))
+             :velocity vel
+             :last-forces force})))
 
 (defn with-prepared-assets [callback]
   ;; a few assets we can resize lazily
@@ -587,15 +594,26 @@ space taking into account the current viewport"
                                    %1
                                    %2)
                                 contacts)
-            pos (:position p)
             vel (:velocity p)
+            vel-due-to-force (vec-scale (:last-forces p) (* (:mass p) +secs-per-tick+))
+            veldiff (vec-mag (vec-sub vel vel-due-to-force))
+            pos (:position p)
             newpos (vec-add pos (vec-scale (:normal max-contact)
-                                           (:incursion max-contact)))
+                                           (+ 0.001 (:incursion max-contact))))
+            restitution (if (< veldiff 0.06)
+                          ;; our motion is only due to forces accumulated in 1
+                          ;; frame. we should be resting relative to this contact
+                          0
+          
+                          ;; we have a real constraint violation,
+                          ;; resolve it using our usual restitution
+                          restitution)
             newvel (vec-add vel (vec-scale (:normal max-contact)
                                            (* (+ 1 restitution)
                                               (Math/abs
                                                (vec-dot (:normal max-contact)
                                                         vel)))))]
+        
         (conj p {:position newpos
                  :velocity newvel})))))
 
@@ -660,7 +678,7 @@ space taking into account the current viewport"
   (dom/setTextContent (content) "")
   (prepare-display)
   (prepare-input)
-  (prepare-sound)
+  ;;(prepare-sound)
   
   (with-prepared-assets
     (fn []
