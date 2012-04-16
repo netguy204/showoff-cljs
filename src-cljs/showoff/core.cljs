@@ -26,6 +26,19 @@
 (def *media-player* nil)
 (def *entities* (atom #{}))
 
+(defprotocol Tickable
+  (tick [obj]))
+
+(defprotocol Rectable
+  (to-rect [obj]))
+
+(defprotocol Drawable
+  (draw [obj ctx]))
+
+(extend-type default
+  Drawable
+  (draw [_ _] false))
+
 (defn make-canvas [[w h]]
   (let [canvas (dom/createDom "canvas")]
     (set! (.-width canvas) w)
@@ -534,16 +547,40 @@ space taking into account the current viewport"
         (conj p {:position newpos
                  :velocity newvel})))))
 
-(declare guy-particle)
 
-(defprotocol Tickable
-  (tick [obj]))
+(defrecord Bullet [particle maxticks]
+  Rectable
+  (to-rect [bullet]
+    (let [[x y] (:position @particle)]
+      [x y 0.2 0.2]))
+  
+  Tickable
+  (tick [bullet]
+    (let [ticks (+ 1 (or (:ticks @particle) 0))]
+      (cond
+        ;; check for timeout
+        (> ticks maxticks)
+        (swap! *entities* disj bullet)
 
-(defprotocol Rectable
-  (to-rect [obj]))
+        ;; check for map collisions
+        (not (empty? (map-collisions *current-map* (to-rect bullet))))
+        (swap! *entities* disj bullet)
+        
+        ;; otherwise, integrate
+        :else
+        (reset! particle (conj (integrate-particle @particle)
+                               {:ticks ticks})))))
 
-(defprotocol Drawable
-  (draw [obj ctx]))
+  Drawable
+  (draw [bullet ctx]
+    (let [[x y w h] (to-rect bullet)]
+      (filled-rect ctx [x y] [w h] (color [128 128 128])))))
+
+(def *guy-extra-forces* (atom []))
+(defn guy-extra-forces [p]
+  (let [force (reduce vec-add [0 0] @*guy-extra-forces*)]
+    (reset! *guy-extra-forces* [])
+    force))
 
 (defrecord Guy [particle]
   Rectable
@@ -553,17 +590,22 @@ space taking into account the current viewport"
 
   Tickable
   (tick [guy]
+    ;; firing?
+    (when (*command-state-map* 32)
+      (let [bullet {:mass 1
+                    :position (vec-add [1 0.5] (:position @particle))
+                    :velocity [6 0]}]
+       (swap! *entities* conj (Bullet. (atom bullet) 40)))
+      (swap! *guy-extra-forces* conj [-3 0]))
+    
     (reset! particle (apply-particle-vs-map (integrate-particle @particle)
                                             *current-map*
-                                            (guy-rect)
+                                            (to-rect guy)
                                             0.1)))
 
   Drawable
   (draw [guy ctx]
     (draw-sprite ctx *guy-sprite* (:position @particle))))
-
-(defn guy-rect []
-  (to-rect *guy*))
 
 (def *guy*
   (Guy.
@@ -574,13 +616,15 @@ space taking into account the current viewport"
           ;; bring to a stop quickly
           :force-generators
           [(drag-force-generator 1)
-           (ground-friction-generator guy-rect 4)
-           (gravity-force-generator 10)]
+           (ground-friction-generator #(to-rect *guy*) 4)
+           (gravity-force-generator 10)
+           guy-extra-forces]
           
           :velocity-generators
           (conj (keyboard-direction-generators 0.2)
-                (jump-velocity-generator guy-rect 3))
+                (jump-velocity-generator #(to-rect *guy*) 3))
           })))
+
 (swap! *entities* conj *guy*)
 
 (defn guy-particle []
@@ -668,6 +712,11 @@ space taking into account the current viewport"
   (doseq [entity @*entities*]
     (tick entity)))
 
+(defn draw-entities []
+  (let [ctx (context)]
+    (doseq [entity @*entities*]
+      (draw entity ctx))))
+
 (defn draw-hud []
   (let [[w h] (img-dims *hud-sprite*)
         [sw sh] *world-dims*]
@@ -677,19 +726,19 @@ space taking into account the current viewport"
 
 (defn draw-guy-tile-test []
   (let [ctx (context)]
-    (doseq [idx (rect->idxs *current-map* (guy-rect))]
+    (doseq [idx (rect->idxs *current-map* (to-rect *guy*))]
       (let [xy (idx->coords *current-map* idx)]
         (filled-rect ctx xy [1 1] (color [255 0 255]))))))
 
 (defn draw-guy-collision-test []
-  (doseq [idx (map-collisions *current-map* (guy-rect))]
+  (doseq [idx (map-collisions *current-map* (to-rect *guy*))]
     (filled-rect (context) (idx->coords *current-map* idx) [1 1] (color [255 0 255]))))
 
 (defn draw-world []
   (clear)
   (draw-map *current-map*)
   (draw-guy-collision-test)
-  (draw *guy* (context))
+  (draw-entities)
   (draw-hud))
 
 (defn cycle []
