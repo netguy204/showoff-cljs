@@ -15,7 +15,7 @@
   (by-id "content"))
 
 (def ^:dynamic *display* nil)
-(def ^:dynamic *viewport* [0 0 16 10]) ;; expressed in tiles
+(declare viewport-rect)
 (def ^:dynamic *world-dims* [640 480]) ;; expressed in pixels
 (def ^:dynamic *tile-dims* [8 8])
 (def *tile-in-world-dims* [(/ 640 16) (/ 480 12)])
@@ -24,6 +24,7 @@
 (def *current-map* nil)
 (def *command-state-map* #{})
 (def *media-player* nil)
+(def *entities* (atom #{}))
 
 (defn make-canvas [[w h]]
   (let [canvas (dom/createDom "canvas")]
@@ -73,7 +74,7 @@
 (defn transform [[x y w h]]
   "convert from x y w h in tilespace to a position in visible screen
 space taking into account the current viewport"
-  (let [[vx vy vw vh] *viewport*
+  (let [[vx vy vw vh] (viewport-rect)
         [sw sh] *world-dims*
         [twpx thpx] *tile-in-world-dims*]
     
@@ -81,18 +82,6 @@ space taking into account the current viewport"
      (Math/floor (* (- y vy) thpx))
      (Math/floor (* w twpx))
      (Math/floor (* h thpx))]))
-
-(defn viewport-offset
-  ([] (let [[x y _ _] *viewport*]
-        [x y]))
-  ([[x y]] (let [[_ _ w h] *viewport*]
-             (set! *viewport* [x y w h]))))
-
-(defn viewport-dims
-  ([] (let [[_ _ w h] *viewport*]
-        [w h]))
-  ([[w h]] (let [[x y _ _] *viewport*]
-             (set! *viewport* [x y w h]))))
 
 (defn context
   ([] (context *display*))
@@ -200,10 +189,10 @@ space taking into account the current viewport"
         data (into
            []
            (for [idx (range (* w h))]
-             (+map-symbols+ (get-pixel-idx pdata (* 4 idx)))))]
+             (conj (+map-symbols+ (get-pixel-idx pdata (* 4 idx)))
+                   {:objects (atom #{})})))]
     
-   {:pdata pdata
-    :dims dims
+   {:dims dims
     :data data}))
 
 (defn get-map-idx [map idx]
@@ -251,7 +240,7 @@ space taking into account the current viewport"
   (let [[mw _] (:dims map)
         ctx (context)]
 
-    (doseq [idx (rect->idxs map *viewport*)]
+    (doseq [idx (rect->idxs map (viewport-rect))]
       (let [tx (mod idx mw)
             ty (Math/floor (/ idx mw))
             rec (get-map-idx map idx)]
@@ -442,24 +431,6 @@ space taking into account the current viewport"
       value
       [0 0])))
 
-(def +viewport-spring-constant+ 20)
-(def +viewport-drag-coefficient+ 8)
-(def +viewport-max-displacement+ 2)
-
-(def *viewport-particle*
-  {:mass 1
-   :position [0 0]
-   :velocity [0 0]
-
-   ;; try to keep the player character basically centered
-   :force-generators
-   [(fn [p] (spring-force (vec-sub (:position *guy-particle*)
-                                   (vec-sub (rect-center *viewport*)
-                                            [0 1]))
-                          +viewport-max-displacement+
-                          +viewport-spring-constant+))
-    (drag-force-generator +viewport-drag-coefficient+)]})
-
 (defn keyboard-direction-generators [scale]
   [(keyboard-velocity-generator (.-LEFT gevents/KeyCodes) [(- scale) 0])
    (keyboard-velocity-generator (.-RIGHT gevents/KeyCodes) [scale 0])])
@@ -504,29 +475,10 @@ space taking into account the current viewport"
       (let [xvel (vec-dot [1 0] (:velocity p))]
         (if (< (Math/abs xvel) 0.01)
           ;; stop us completely if we're not moving very fast
-          (vec-scale [1 0] (- xvel))
+          (vec-scale [1 0] (- xvel)) ;; fixme: compute force needed to stop
           ;; otherwise slowdown by our factor
           (vec-scale [1 0] (* -1 coefficient xvel)))))))
 
-(defn guy-rect []
-  (let [[x y] (:position *guy-particle*)]
-    [(+ x 0.2) (+ y 0.1) 0.6 0.9]))
-
-(def *guy-particle*
-  {:mass 1
-   :position [2 2]
-   :velocity [0 0]
-
-   ;; bring to a stop quickly
-   :force-generators
-   [(drag-force-generator 1)
-    (ground-friction-generator guy-rect 4)
-    (gravity-force-generator 10)]
-
-   :velocity-generators
-   (conj (keyboard-direction-generators 0.2)
-         (jump-velocity-generator guy-rect 3))
-   })
 
 (defn accumulate-from-generators [p generators initial]
   (reduce (fn [result func] (vec-add result (func p)))
@@ -545,41 +497,6 @@ space taking into account the current viewport"
              :velocity vel
              :last-forces force})))
 
-(defn with-prepared-assets [callback]
-  ;; a few assets we can resize lazily
-  (with-img "hud/hud.png"
-    (fn [hud]
-      (set! *hud-sprite* (resize-nearest-neighbor hud *world-dims*))))
-
-  (with-img "sprites/guy.png"
-    (fn [guy]
-      (set! *guy-sprite* (resize-nearest-neighbor guy *tile-in-world-dims*))))
-  
-  ;; its critical that +map-symbols+ be built before callback is
-  ;; invoked
-  (with-img "sprites/air.png"
-    (fn [air]
-      (with-img "sprites/dirt.png"
-        (fn [dirt]
-          (set! +map-symbols+
-                {[255 255 255]
-                 {:kind :image
-                  :image (resize-nearest-neighbor air *tile-in-world-dims*)}
-                 
-                 [255 0 0]
-                 {:kind :image
-                  :image (resize-nearest-neighbor dirt *tile-in-world-dims*)
-                  :collidable true}
-                     
-                 [0 0 255]
-                 {:kind :rect
-                  :color [0 0 255]}})
-          (callback))))))
-
-(defn update-viewport []
-  (let [new-viewport (integrate-particle *viewport-particle*)]
-    (viewport-offset (:position new-viewport))
-    (set! *viewport-particle* new-viewport)))
 
 (defn idxrect-contact [map idx rect]
   (rectrect-contact rect (idx->rect map idx)))
@@ -617,13 +534,139 @@ space taking into account the current viewport"
         (conj p {:position newpos
                  :velocity newvel})))))
 
-(defn update-guy []
-  (set!
-   *guy-particle*
-   (apply-particle-vs-map (integrate-particle *guy-particle*)
-                          *current-map*
-                          (guy-rect)
-                          0.1)))
+(declare guy-particle)
+
+(defprotocol Tickable
+  (tick [obj]))
+
+(defprotocol Rectable
+  (to-rect [obj]))
+
+(defprotocol Drawable
+  (draw [obj ctx]))
+
+(defrecord Guy [particle]
+  Rectable
+  (to-rect [guy]
+    (let [[x y] (:position @particle)]
+      [(+ x 0.2) (+ y 0.1) 0.6 0.9]))
+
+  Tickable
+  (tick [guy]
+    (reset! particle (apply-particle-vs-map (integrate-particle @particle)
+                                            *current-map*
+                                            (guy-rect)
+                                            0.1)))
+
+  Drawable
+  (draw [guy ctx]
+    (draw-sprite ctx *guy-sprite* (:position @particle))))
+
+(defn guy-rect []
+  (to-rect *guy*))
+
+(def *guy*
+  (Guy.
+   (atom {:mass 1
+          :position [2 2]
+          :velocity [0 0]
+          
+          ;; bring to a stop quickly
+          :force-generators
+          [(drag-force-generator 1)
+           (ground-friction-generator guy-rect 4)
+           (gravity-force-generator 10)]
+          
+          :velocity-generators
+          (conj (keyboard-direction-generators 0.2)
+                (jump-velocity-generator guy-rect 3))
+          })))
+(swap! *entities* conj *guy*)
+
+(defn guy-particle []
+  @(:particle *guy*))
+
+(def +viewport-spring-constant+ 20)
+(def +viewport-drag-coefficient+ 8)
+(def +viewport-max-displacement+ 2)
+
+(defrecord Viewport [particle]
+  Rectable
+  (to-rect [vp]
+    (let [[x y] (:position @particle)]
+      [x y 16 10])) ;; expressed in tiles
+
+  Tickable
+  (tick [vp]
+    (reset! particle (integrate-particle @particle))))
+
+(def *viewport*
+  (Viewport.
+   (atom
+    {:mass 1
+     :position [0 0]
+     :velocity [0 0]
+     
+     ;; try to keep the player character basically centered
+     :force-generators
+     [(fn [p] (spring-force (vec-sub (:position (guy-particle))
+                                     (vec-sub (rect-center (viewport-rect))
+                                              [0 1]))
+                            +viewport-max-displacement+
+                            +viewport-spring-constant+))
+      (drag-force-generator +viewport-drag-coefficient+)]})))
+(swap! *entities* conj *viewport*)
+
+(defn viewport-rect []
+  (to-rect *viewport*))
+
+(defn with-prepared-assets [callback]
+  ;; a few assets we can resize lazily
+  (with-img "hud/hud.png"
+    (fn [hud]
+      (set! *hud-sprite* (resize-nearest-neighbor hud *world-dims*))))
+
+  (with-img "sprites/guy.png"
+    (fn [guy]
+      (set! *guy-sprite* (resize-nearest-neighbor guy *tile-in-world-dims*))))
+  
+  ;; its critical that +map-symbols+ be built before callback is
+  ;; invoked
+  (with-img "sprites/air.png"
+    (fn [air]
+      (with-img "sprites/dirt.png"
+        (fn [dirt]
+          (set! +map-symbols+
+                {[255 255 255]
+                 {:kind :image
+                  :image (resize-nearest-neighbor air *tile-in-world-dims*)}
+                 
+                 [255 0 0]
+                 {:kind :image
+                  :image (resize-nearest-neighbor dirt *tile-in-world-dims*)
+                  :collidable true}
+                     
+                 [0 0 255]
+                 {:kind :rect
+                  :color [0 0 255]}})
+          (callback))))))
+
+(defn move-object [map obj src-idxs dest-idxs]
+  ;; remove from old locations
+  (doseq [idx src-idxs]
+    (let [rec (get-map-idx map idx)
+          objects (:objects rec)]
+      (reset! objects (disj @objects obj))))
+
+  ;; insert into new locations
+  (doseq [idx dest-idxs]
+    (let [rec (get-map-idx map idx)
+          objects (:objects rec)]
+      (reset! objects (conj @objects obj)))))
+
+(defn tick-entities []
+  (doseq [entity @*entities*]
+    (tick entity)))
 
 (defn draw-hud []
   (let [[w h] (img-dims *hud-sprite*)
@@ -642,16 +685,12 @@ space taking into account the current viewport"
   (doseq [idx (map-collisions *current-map* (guy-rect))]
     (filled-rect (context) (idx->coords *current-map* idx) [1 1] (color [255 0 255]))))
 
-(defn draw []
+(defn draw-world []
   (clear)
   (draw-map *current-map*)
   (draw-guy-collision-test)
-  (draw-sprite (context) *guy-sprite* (:position *guy-particle*))
+  (draw *guy* (context))
   (draw-hud))
-
-(defn tick []
-  (update-guy)
-  (update-viewport))
 
 (defn cycle []
   
@@ -664,11 +703,11 @@ space taking into account the current viewport"
     (set! *remaining-time* leftover)
     
     (loop [ii 0]
-      (tick)
+      (tick-entities)
       (when (< ii ticks)
         (recur (inc ii))))
 
-    (draw)
+    (draw-world)
 
     true))
 

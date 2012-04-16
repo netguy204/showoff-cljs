@@ -12,6 +12,7 @@
       :optimizations :whitespace
       :pretty-print true
       }
+     :id "standard"
      }
 
     {:source-path "src-cljs"
