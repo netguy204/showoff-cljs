@@ -199,7 +199,7 @@
   (draw [guy ctx]
     (draw-sprite ctx *guy-sprite* (:position @particle))))
 
-(def +guy-speed+ 8)
+(def +guy-speed+ 3)
 
 (def *guy*
   (Guy.
@@ -212,7 +212,7 @@
           
           [(drag-force-generator 1.2)
            (ground-friction-generator #(to-rect *guy*) 8)
-           (gravity-force-generator 10)
+           (gravity-force-generator 6)
            guy-extra-forces
            (keyboard-velocity-generator (.-LEFT gevents/KeyCodes) [(- +guy-speed+) 0])
            (keyboard-velocity-generator (.-RIGHT gevents/KeyCodes) [+guy-speed+ 0])
@@ -261,30 +261,32 @@
     (fn [hud]
       (set! *hud-sprite* (resize-nearest-neighbor hud showoff.showoff.*world-dims*))))
 
-  (with-img "sprites/guy.png"
-    (fn [guy]
-      (set! *guy-sprite* (resize-nearest-neighbor guy showoff.showoff.*tile-in-world-dims*))))
-  
   ;; its critical that +map-symbols+ be built before callback is
   ;; invoked
-  (with-img "sprites/air.png"
-    (fn [air]
-      (with-img "sprites/dirt.png"
-        (fn [dirt]
-          (set! +map-symbols+
-                {[255 255 255]
-                 {:kind :image
-                  :image (resize-nearest-neighbor air showoff.showoff.*tile-in-world-dims*)}
-                 
-                 [255 0 0]
-                 {:kind :image
-                  :image (resize-nearest-neighbor dirt showoff.showoff.*tile-in-world-dims*)
-                  :collidable true}
-                     
-                 [0 0 255]
-                 {:kind :rect
-                  :color [0 0 255]}})
-          (callback))))))
+  (with-img "sprites/sheet.png"
+    (fn [sheet]
+      (let [dest-dims showoff.showoff.*tile-in-world-dims*]
+        (set! *guy-sprite* (resize-nearest-neighbor sheet [16 0 16 16] dest-dims))
+        (set! +map-symbols+
+              {[255 255 255]
+               {:kind :image
+                :image (resize-nearest-neighbor sheet [0 0 16 16] dest-dims)}
+               
+               [255 0 0]
+               {:kind :image
+                :image (resize-nearest-neighbor sheet [0 16 16 16] dest-dims)
+                :collidable true}
+               
+               [136 0 0]
+               {:kind :image
+                :image (resize-nearest-neighbor sheet [0 32 16 16] dest-dims)
+                :collidable true}
+               
+               [0 0 255]
+               {:kind :rect
+                :color [0 0 255]}}))
+      
+      (callback))))
 
 
 

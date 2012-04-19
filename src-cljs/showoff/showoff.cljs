@@ -22,8 +22,8 @@
 (def ^:dynamic *display* nil)
 (def ^:dynamic *viewport* nil)
 (def ^:dynamic *world-dims* [640 480]) ;; expressed in pixels
-(def ^:dynamic *tile-dims* [8 8])
 (def *tile-in-world-dims* [(/ 640 16) (/ 480 12)])
+(def *tile-dims* [16 16])
 
 (def *default-color* [255 0 255])
 (def *entities* (atom #{}))
@@ -48,6 +48,15 @@ space taking into account the current viewport"
      (Math/floor (* (- y vy) thpx))
      (Math/floor (* w twpx))
      (Math/floor (* h thpx))]))
+
+(defn with-transform [ctx viewport callback]
+  (.save ctx)
+  (let [[vx vy] viewport
+        [tw th] *tile-in-world-dims*]
+    (.scale ctx tw th)
+    (.translate ctx (- vx) (- vy))
+    (callback))
+  (.restore ctx))
 
 (defn context
   ([] (context *display*))
@@ -149,7 +158,8 @@ space taking into account the current viewport"
                py (+ y sy)
                pix (get-pixel pdata px py)]
            (set! (.-fillStyle ctx) (color pix (get-pixel-alpha pdata px py)))
-           (.fillRect ctx (* x rw) (* y rh) rw rh)))
+           (.fillRect ctx (* x rw) (* y rh)
+                      (Math/ceil rw) (Math/ceil rh))))
 
        canvas)))
 
@@ -162,8 +172,11 @@ space taking into account the current viewport"
         data (into
            []
            (for [idx (range (* w h))]
-             (conj (map-symbols (get-pixel-idx pdata (* 4 idx)))
-                   {:objects (atom #{})})))]
+             (let [pix (get-pixel-idx pdata (* 4 idx))
+                   sym (map-symbols pix)]
+               (if sym
+                 (conj sym {:objects (atom #{})})
+                 (js/alert (format "couldn't find map symbol %s" (pr-str pix)))))))]
     
    {:dims dims
     :data data}))
@@ -181,22 +194,28 @@ space taking into account the current viewport"
 
 (defn draw-map [map]
   (let [[mw _] (:dims map)
-        ctx (context)]
+        ctx (context)
+        [dx dy] *tile-in-world-dims*
+        idxs (rect->idxs map (viewport-rect))
+        [ox oy ow oh] (transform (idx->rect map (first idxs)))
+        [otx oty] (idx->coords map (first idxs))]
 
-    (doseq [idx (rect->idxs map (viewport-rect))]
+    (doseq [idx idxs]
       (let [tx (mod idx mw)
             ty (Math/floor (/ idx mw))
-            rec (get-map-idx map idx)]
+            rec (get-map-idx map idx)
+            tx (+ ox (* (- tx otx) ow))
+            ty (+ oy (* (- ty oty) oh))]
         (cond
           (nil? rec)
           (filled-rect ctx [tx ty] [1 1] (color *default-color*))
-          
+              
           (= (rec :kind) :rect)
           (filled-rect ctx [tx ty] [1 1]
                        (color (rec :color)))
-          
+              
           (= (rec :kind) :image)
-          (draw-sprite ctx (:image rec) [tx ty]))))))
+          (.drawImage ctx (:image rec) 0 0 dx dy tx ty ow oh))))))
 
 (defn move-object [map obj src-idxs dest-idxs]
   ;; remove from old locations
