@@ -10,7 +10,7 @@
                                 draw-sprite make-canvas get-img with-img
                                 draw-entities img-dims context filled-rect
                                 color map-collisions rect->idxs idx->coords
-                                resize-nearest-neighbor]))
+                                resize-nearest-neighbor record-vs-rect]))
   (:require (goog.dom :as dom)
             (goog.string :as string)
             (goog.string.format :as format)
@@ -314,12 +314,34 @@
                [255 0 0]
                {:kind :image
                 :image (resize-nearest-neighbor sheet [0 16 16 16] dest-dims)
-                :collidable true}
-               
+                :collidable true
+                :shape :rect}
+
+               ;; slopes down going right
+               [255 255 0]
+               {:kind :image
+                :image (resize-nearest-neighbor sheet [16 16 16 16] dest-dims)
+                :collidable true
+                :shape :right-triangle
+                :slope 1
+                :intercept 0
+                :top-filled false}
+
+               ;; slopes up going right
+               [0 255 0]
+               {:kind :image
+                :image (resize-nearest-neighbor sheet [32 16 16 16] dest-dims)
+                :collidable true
+                :shape :right-triangle
+                :slope -1
+                :intercept 1
+                :top-filled false}
+
                [136 0 0]
                {:kind :image
                 :image (resize-nearest-neighbor sheet [0 32 16 16] dest-dims)
-                :collidable true}
+                :collidable true
+                :shape :rect}
                
                [0 0 255]
                {:kind :rect

@@ -175,7 +175,8 @@ space taking into account the current viewport"
              (let [pix (get-pixel-idx pdata (* 4 idx))
                    sym (map-symbols pix)]
                (if sym
-                 (conj sym {:objects (atom #{})})
+                 (conj sym {:objects (atom #{})
+                            :coords (idx->coords {:dims dims} idx)})
                  (js/alert (format "couldn't find map symbol %s" (pr-str pix)))))))]
     
    {:dims dims
@@ -322,12 +323,28 @@ space taking into account the current viewport"
 
 ;;; collisions
 
+(defmulti record-vs-rect #(:shape %1))
+
 (defn map-collisions [map rect]
   (filter
    (fn [res] (not (nil? res)))
    (for [idx (rect->idxs map rect)]
      (let [rec (get-map-idx map idx)]
-       (when (:collidable rec) idx)))))
+       (cond
+         ;; not solid
+         (not (:collidable rec))
+         nil
+         
+         ;; the easy case, a square shape
+         (and (:collidable rec) (= (:shape rec) :rect))
+         idx
+
+         ;; the more costly case... just something else
+         (not (nil? (record-vs-rect rec rect)))
+         idx
+
+         :else
+         nil)))))
 
 (defn rectrect-horizontal-overlap [r1 r2]
   "assumes that there is some overlap"
@@ -389,8 +406,53 @@ space taking into account the current viewport"
           {:normal (vec-unit [1 1])
            :incursion (vec-mag [ho vo])})))))
 
+(defmethod record-vs-rect :rect
+  [rec rect]
+  (let [[mx my] (:coords rec)
+        map-rect [mx my 1 1]]
+    (when (rect-intersect map-rect rect)
+      (rectrect-contact rect map-rect))))
+
+(def ^:private sqrt2 (Math/sqrt 2))
+
+(def ^:private +corner-fuzz+ 0.1)
+
+(defmethod record-vs-rect :right-triangle
+  [rec rect]
+  (let [[mx my] (:coords rec)
+        [rx ry rw rh] rect
+        {:keys [slope intercept top-filled]} rec
+        corner-test (fn [x y]
+                      (when (and (> x (- mx +corner-fuzz+))
+                                 (< x (+ mx 1 +corner-fuzz+))
+                                 (> y (- my +corner-fuzz+))
+                                 (< y (+ my 1 +corner-fuzz+)))
+                        (let [dx (- x mx)
+                              dy (- y my)
+                              ly (+ intercept (* slope dx))]
+                          (cond
+                            (and top-filled (< dy ly))
+                            (* sqrt2 (- ly dy))
+                            
+                            (and (not top-filled) (> dy ly))
+                            (* sqrt2 (- dy ly))
+                            
+                            :else
+                            false))))] 
+    
+    (let [tl (corner-test rx ry)
+          tr (corner-test (+ rx rw) ry)
+          bl (corner-test rx (+ ry rh))
+          br (corner-test (+ rx rw) (+ ry rh))]
+      (cond
+        tl {:normal (vec-unit [1 1]) :incursion tl}
+        tr {:normal (vec-unit [-1 1]) :incursion tr}
+        bl {:normal (vec-unit [1 -1]) :incursion bl}
+        br {:normal (vec-unit [-1 -1]) :incursion br}
+        :else nil))))
+
 (defn idxrect-contact [map idx rect]
-  (rectrect-contact rect (idx->rect map idx)))
+  (record-vs-rect (get-map-idx map idx) rect))
 
 (defn supported-by-map [map rect]
   (let [[rx ry rw rh] rect
