@@ -1,8 +1,8 @@
 (ns showoff.core
   (:use (showoff.showoff :only [get-img remove-entity add-entity supported-by-map
                                 Rectable Tickable Drawable
-                                vec-add vec-dot vec-scale vec-sub
-                                rect-center viewport-rect clear
+                                vec-add vec-dot vec-scale vec-sub vec-unit
+                                rect-center viewport-rect clear display
                                 tick-entities tick to-rect draw
                                 drag-force-generator gravity-force-generator
                                 integrate-particle spring-force
@@ -10,7 +10,8 @@
                                 draw-sprite make-canvas get-img with-img
                                 draw-entities img-dims context filled-rect
                                 color map-collisions rect->idxs idx->coords
-                                resize-nearest-neighbor record-vs-rect]))
+                                resize-nearest-neighbor record-vs-rect
+                                set-display-and-viewport cycle-once]))
   (:require (goog.dom :as dom)
             (goog.string :as string)
             (goog.string.format :as format)
@@ -52,11 +53,6 @@
 ;; end jayq
 
 
-(defn prepare-display []
-  (let [[w h] showoff.showoff.*world-dims*]
-    (set! showoff.showoff.*display* (make-canvas [w h]))
-    (dom/appendChild (content) showoff.showoff.*display*)))
-
 (defn prepare-sound []
   (let [spec {:resources ["music/epica.ogg"
                           "music/epica.mp3"]
@@ -83,13 +79,6 @@
   (let [doc js/document]
     (gevents/listen doc (.-KEYDOWN gevents/EventType) keydown)
     (gevents/listen doc (.-KEYUP gevents/EventType) keyup)))
-
-(defn until-false [callback timeout]
-  (timer/callOnce
-   (fn []
-     (when (callback)
-       (until-false callback timeout)))
-   timeout))
 
 (def *guy-sprites* nil)
 (def *hud-sprite* (get-img "hud/hud.png"))
@@ -230,7 +219,7 @@
     (reset! particle (apply-particle-vs-map (integrate-particle @particle)
                                             *current-map*
                                             (to-rect guy)
-                                            0)))
+                                            0.0)))
 
   showoff.showoff.Drawable
   (draw [guy ctx]
@@ -238,24 +227,26 @@
           sprite (if (> vx 0) (nth *guy-sprites* 0) (nth *guy-sprites* 1))]
       (draw-sprite ctx sprite (:position @particle)))))
 
-(def +guy-speed+ 3)
+(def +guy-speed+ 12)
 
 (def *guy*
   (Guy.
-   (atom {:mass 1
+   (atom {:mass 3
           :position [2 2]
           :velocity [0 0]
           
           ;; bring to a stop quickly
           :force-generators
           
-          [(drag-force-generator 1.2)
-           (ground-friction-generator #(to-rect *guy*) 8)
-           (gravity-force-generator 6)
+          [(drag-force-generator 0.8)
+           (ground-friction-generator #(to-rect *guy*) 30)
+           (gravity-force-generator 16)
            guy-extra-forces
-           (keyboard-velocity-generator (.-LEFT gevents/KeyCodes) [(- +guy-speed+) 0])
-           (keyboard-velocity-generator (.-RIGHT gevents/KeyCodes) [+guy-speed+ 0])
-           (jump-velocity-generator #(to-rect *guy*) 22 30)
+           (keyboard-velocity-generator
+            (.-LEFT gevents/KeyCodes) [(- +guy-speed+) 0])
+           (keyboard-velocity-generator
+            (.-RIGHT gevents/KeyCodes) [+guy-speed+ 0])
+           (jump-velocity-generator #(to-rect *guy*) 200 8)
            ]
           
           })))
@@ -263,22 +254,24 @@
 (defn guy-particle []
   @(:particle *guy*))
 
-(def +viewport-spring-constant+ 20)
-(def +viewport-drag-coefficient+ 8)
+(def +viewport-spring-constant+ 40)
+(def +viewport-drag-coefficient+ 3)
 (def +viewport-max-displacement+ 2)
 
-(defrecord Viewport [particle]
+(defrecord Viewport [dims particle]
   showoff.showoff.Rectable
   (to-rect [vp]
-    (let [[x y] (:position @particle)]
-      [x y 16 10])) ;; expressed in tiles
+    (let [[w h] dims
+          [x y] (:position @particle)]
+      [x y w h])) ;; expressed in tiles
 
   showoff.showoff.Tickable
   (tick [vp]
     (reset! particle (integrate-particle @particle))))
 
-(set! showoff.showoff.*viewport*
+(def *viewport*
   (Viewport.
+   [16 10]
    (atom
     {:mass 1
      :position [0 0]
@@ -293,8 +286,7 @@
                             +viewport-spring-constant+))
       (drag-force-generator +viewport-drag-coefficient+)]})))
 
-
-(defn with-prepared-assets [callback]
+(defn with-prepared-assets [callback & {:keys [force-nocache]}]
   ;; a few assets we can resize lazily
   (with-img "hud/hud.png"
     (fn [hud]
@@ -302,7 +294,9 @@
 
   ;; its critical that +map-symbols+ be built before callback is
   ;; invoked
-  (with-img "sprites/sheet.png"
+  (with-img (if force-nocache
+              (str "sprites/sheet.png?" (Math/random))
+              "sprites/sheet.png")
     (fn [sheet]
       (let [dest-dims showoff.showoff.*tile-in-world-dims*]
         (set! *guy-sprites* [(resize-nearest-neighbor sheet [16 0 16 16] dest-dims)
@@ -327,6 +321,16 @@
                 :intercept 0
                 :top-filled false}
 
+               [153 153 0]
+               {:kind :image
+                :image (resize-nearest-neighbor sheet [16 32 16 16] dest-dims)
+                :collidable true
+                :shape :right-triangle
+                :slope 1
+                :intercept 0
+                :top-filled false}
+
+
                ;; slopes up going right
                [0 255 0]
                {:kind :image
@@ -337,7 +341,16 @@
                 :intercept 1
                 :top-filled false}
 
-               [136 0 0]
+               [0 102 51]
+               {:kind :image
+                :image (resize-nearest-neighbor sheet [32 32 16 16] dest-dims)
+                :collidable true
+                :shape :right-triangle
+                :slope -1
+                :intercept 1
+                :top-filled false}
+
+               [153 0 0]
                {:kind :image
                 :image (resize-nearest-neighbor sheet [0 32 16 16] dest-dims)
                 :collidable true
@@ -375,22 +388,89 @@
   (draw-entities)
   (draw-hud))
 
+(def request-animation (or window/requestAnimationFrame
+                           window/webkitRequestAnimationFrame
+                           window/mozRequestAnimationFrame
+                           window/oRequestAnimationFrame
+                           window/msRequestAnimationFrame))
+
+(defn until-false [callback timeout]
+  (let [step (fn [] (when (callback) (until-false callback timeout)))]
+    (timer/callOnce step timeout)
+    (comment
+      (if (> timeout 0)
+       (timer/callOnce step timeout)
+       (request-animation step (display))))))
+
 (defn ^:export main []
   ;;(repl/connect "http://localhost:9000/repl")
   
   (dom/setTextContent (content) "")
-  (prepare-display)
+  
+  ;; prepare the display
+  (let [screen-dims [640 480]
+        canvas (make-canvas screen-dims)
+        viewport-fn (fn [] (to-rect *viewport*))]
+    (set-display-and-viewport canvas screen-dims viewport-fn)
+    (dom/appendChild (content) canvas))
+
   (prepare-input)
-  (prepare-sound)
+  ;;(prepare-sound)
   
   (with-prepared-assets
     (fn []
-      (with-img "maps/test.png"
+      (with-img "maps/test.gif"
         (fn [img]
           (set! *current-map* (load-map img +map-symbols+))
           (add-entity *current-map* *guy*)
-          (add-entity *current-map* showoff.showoff.*viewport*)
+          (add-entity *current-map* *viewport*)
 
-          (until-false #(cycle draw-world) 0))))))
+          (until-false #(cycle-once draw-world) 0))))))
 
 
+
+(defn ^:export map-viewer []
+  ;; use a much larger display
+  (let [screen-dims [1024 768]
+        canvas (make-canvas screen-dims)
+        viewport-speed 0.5
+        viewport (Viewport.
+                  [64 48]
+                  (atom
+                   {:mass 1
+                    :position [0 0]
+                    :velocity [0 0]
+
+                    :offset-generators
+                    [(keyboard-velocity-generator
+                      (.-LEFT gevents/KeyCodes) [(- viewport-speed) 0])
+                     (keyboard-velocity-generator
+                      (.-RIGHT gevents/KeyCodes) [viewport-speed 0])
+                     (keyboard-velocity-generator
+                      (.-UP gevents/KeyCodes) [0 (- viewport-speed)])
+                     (keyboard-velocity-generator
+                      (.-DOWN gevents/KeyCodes) [0 viewport-speed])]}))]
+    (dom/appendChild (content) canvas)
+    (set-display-and-viewport canvas screen-dims #(to-rect viewport))
+    (prepare-input)
+
+    (with-prepared-assets
+      (fn []
+        (with-img "maps/test.gif"
+          (fn [img]
+            (set! *current-map* (load-map img +map-symbols+))
+            (add-entity *current-map* viewport)
+            (until-false #(cycle-once (fn []
+                                   (clear)
+                                   (draw-map *current-map*)))
+                         300)))))
+
+    (gevents/listen
+     (by-id "reload") "click"
+     (fn []
+       (with-prepared-assets
+         (fn []
+           (with-img (str "maps/test.gif?" (Math/random))
+             (fn [img]
+               (set! *current-map* (load-map img +map-symbols+)))))
+         :force-nocache true)))))

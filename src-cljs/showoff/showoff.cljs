@@ -16,11 +16,11 @@
   Drawable
   (draw [_ _] false))
 
-(def +ticks-per-ms+ (/ 33 1000))
+(def +ticks-per-ms+ (/ 50 1000))
 (def +secs-per-tick+ (/ (* +ticks-per-ms+ 1000)))
 
 (def ^:dynamic *display* nil)
-(def ^:dynamic *viewport* nil)
+(def ^:dynamic *viewport-function* nil)
 (def ^:dynamic *world-dims* [640 480]) ;; expressed in pixels
 (def *tile-in-world-dims* [(/ 640 16) (/ 480 12)])
 (def *tile-dims* [16 16])
@@ -35,7 +35,18 @@
     canvas))
 
 (defn viewport-rect []
-  (to-rect *viewport*))
+  (*viewport-function*))
+
+(defn set-display-and-viewport [display display-size viewport-function]
+  (set! *display* display)
+  (set! *viewport-function* viewport-function)
+  (set! *world-dims* display-size)
+  (let [[_ _ vw vh] (viewport-rect)
+        [sw sh] display-size]
+    (set! *tile-in-world-dims* [(/ sw vw) (/ sh vh)])))
+
+(defn display []
+  *display*)
 
 (defn transform [[x y w h]]
   "convert from x y w h in tilespace to a position in visible screen
@@ -92,9 +103,7 @@ space taking into account the current viewport"
 (defn draw-sprite [ctx img [x y]]
   (let [[tx ty tw th] (transform [x y 1 1])
         [sw sh] (img-dims img)]
-    (.drawImage ctx img
-                0 0 sw sh
-                tx ty tw th)))
+    (.drawImage ctx img (Math/round tx) (Math/round ty))))
 
 (defn get-img [url]
   (let [img (js/Image.)]
@@ -164,6 +173,7 @@ space taking into account the current viewport"
        canvas)))
 
 ;;; maps
+(def *alerted-symbols* (atom #{}))
 
 (defn load-map [img map-symbols]
   (let [[w h] (img-dims img)
@@ -177,7 +187,9 @@ space taking into account the current viewport"
                (if sym
                  (conj sym {:objects (atom #{})
                             :coords (idx->coords {:dims dims} idx)})
-                 (js/alert (format "couldn't find map symbol %s" (pr-str pix)))))))]
+                 (when (not (@*alerted-symbols* pix))
+                   (swap! *alerted-symbols* conj pix)
+                   (js/alert (format "couldn't find map symbol %s" (pr-str pix))))))))]
     
    {:dims dims
     :data data}))
@@ -219,7 +231,7 @@ space taking into account the current viewport"
                        (color (rec :color)))
               
           (= (rec :kind) :image)
-          (.drawImage ctx (:image rec) 0 0 dx dy tx ty ow oh))))))
+          (.drawImage ctx (:image rec) (Math/floor tx) (Math/floor ty)))))))
 
 (defn move-object [map obj src-idxs dest-idxs]
   ;; remove from old locations
@@ -492,7 +504,7 @@ space taking into account the current viewport"
   (let [force (accumulate-from-generators p (:force-generators p) [0 0])
         base-vel (accumulate-from-generators p (:velocity-generators p) (:velocity p))
         base-pos (accumulate-from-generators p (:offset-generators p) (:position p))
-        acc (vec-scale force (:mass p))
+        acc (vec-scale force (/ (:mass p)))
         vel (vec-add base-vel (vec-scale acc +secs-per-tick+))
         pos (vec-add base-pos (vec-scale vel +secs-per-tick+))]
     
@@ -512,26 +524,26 @@ space taking into account the current viewport"
         temp (into [] contacts)]
     (if (empty? contacts)
       p
-      (let [max-contact (max-incursion-contact contacts)
+      (let [{:keys [normal incursion]} (max-incursion-contact contacts)
             vel (:velocity p)
-            vel-due-to-force (vec-scale (:last-forces p) (* (:mass p) +secs-per-tick+))
+            vel-due-to-force (vec-scale (:last-forces p)
+                                        (* (/ (:mass p)) +secs-per-tick+))
             veldiff (vec-mag (vec-sub vel vel-due-to-force))
             pos (:position p)
-            newpos (vec-add pos (vec-scale (:normal max-contact)
-                                           (+ 0.001 (:incursion max-contact))))
-            restitution (if (< veldiff 0.06)
-                          ;; our motion is only due to forces accumulated in 1
-                          ;; frame. we should be resting relative to this contact
-                          0
-          
-                          ;; we have a real constraint violation,
-                          ;; resolve it using our usual restitution
-                          restitution)
-            newvel (vec-add vel (vec-scale (:normal max-contact)
-                                           (* (+ 1 restitution)
-                                              (Math/abs
-                                               (vec-dot (:normal max-contact)
-                                                        vel)))))]
+            newpos (vec-add pos (vec-scale normal incursion))
+
+            newvel (if (< veldiff 0.1)
+                     ;; our motion is only due to forces accumulated
+                     ;; in 1 frame. project the velocity into the
+                     ;; contact normal plane
+                     (vec-sub vel (vec-scale normal (vec-dot normal vel)))
+
+                     ;; otherwise, compute velocity using our
+                     ;; coefficient of restitution
+                     (vec-add vel (vec-scale
+                                   normal
+                                   (* (+ 1 restitution)
+                                      (Math/abs (vec-dot normal vel))))))]
         
         (conj p {:position newpos
                  :velocity newvel})))))
@@ -562,25 +574,24 @@ space taking into account the current viewport"
 ;;; game loop
 
 (def ^:private *last-time* (goog/now))
-(def ^:private *remaining-time* 0)
+(def ^:private *remaining-ticks* 0)
 
-(defn cycle [draw-world]
+(defn cycle-once [draw-world]
   (let [now (goog/now)
-        dtms (+ (- now *last-time*) *remaining-time*)
-        ticks (Math/floor (* +ticks-per-ms+ dtms))
-        leftover (- dtms (/ ticks +ticks-per-ms+))]
+        remaining-ticks (+ *remaining-ticks* (* (- now *last-time*) +ticks-per-ms+))
+        ticks (Math/floor remaining-ticks)
+        remaining-ticks (- remaining-ticks ticks)]
     
     (set! *last-time* now)
-    (set! *remaining-time* leftover)
-    
-    (loop [ii 0]
-      (tick-entities)
-      (when (< ii ticks)
-        (recur (inc ii))))
+    (set! *remaining-ticks* remaining-ticks)
+
+    (dotimes [ii ticks]
+      (tick-entities))
 
     ;; only draw if we actually did something
     (when (> ticks 0)
       (draw-world))
 
+    ;; call us back!
     true))
 
