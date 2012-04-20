@@ -209,7 +209,10 @@ space taking into account the current viewport"
         (cond
           (nil? rec)
           (filled-rect ctx [tx ty] [1 1] (color *default-color*))
-              
+
+          (= (rec :kind) :skip)
+          nil
+          
           (= (rec :kind) :rect)
           (filled-rect ctx [tx ty] [1 1]
                        (color (rec :color)))

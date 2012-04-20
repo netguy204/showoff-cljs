@@ -91,7 +91,7 @@
        (until-false callback timeout)))
    timeout))
 
-(def *guy-sprite* (get-img "sprites/guy.png"))
+(def *guy-sprites* nil)
 (def *hud-sprite* (get-img "hud/hud.png"))
 
 ;; a velocity generator function produces a function that takes a
@@ -102,20 +102,42 @@
       value
       [0 0])))
 
-(defn jump-velocity-generator [rect-gen up-vel]
-  (fn [p]
-    (cond
-      ;; not trying to jump
-      (not (*command-state-map* (.-UP gevents/KeyCodes)))
-      [0 0]
+(defn jump-velocity-generator [rect-gen up-vel jump-fuel]
+  (let [state (atom {:jump-fuel jump-fuel
+                     :jumping false})]
+   (fn [p]
+     (let [supported (supported-by-map *current-map* (rect-gen))]
+       (cond
+        ;; not trying to jump
+        (not (*command-state-map* (.-UP gevents/KeyCodes)))
+        (do
+          ;; recharge if we're supported
+          (when supported
+            (swap! state assoc :jump-fuel jump-fuel))
+          ;; reset jumping
+          (swap! state assoc :jumping false)
+          [0 0])
 
-      ;; trying to jump and surface underfoot
-      (supported-by-map *current-map* (rect-gen))
-      [0 (- up-vel)]
+        ;; trying to jump and surface underfoot. give initial
+        ;; velocity, no fuel cost
+        (and supported (not (:jumping @state)))
+        (do
+          (swap! state assoc :jumping true)
+          [0 (- up-vel)])
 
-      ;; can't jump, we're not supported
-      :else
-      [0 0])))
+        ;; can't jump, we're not supported. try to use fuel
+        (:jumping @state)
+        (do
+          (let [fuel (:jump-fuel @state)]
+            (reset! state (conj @state {:jump-fuel (dec fuel)}))
+
+            (if (> fuel 0)
+              [0 (- (* (/ fuel jump-fuel) up-vel))]
+              [0 0])))
+
+        ;; not supported, not trying to jump
+        :else
+        [0 0])))))
 
 (defn ground-friction-generator [rect-gen coefficient]
   (fn [p]
@@ -174,6 +196,8 @@
     (reset! *guy-extra-forces* [])
     force))
 
+(def +firing-cooldown+ 10)
+
 (defrecord Guy [particle]
   showoff.showoff.Rectable
   (to-rect [guy]
@@ -182,13 +206,26 @@
 
   showoff.showoff.Tickable
   (tick [guy]
-    ;; firing?
-    (when (*command-state-map* 32)
-      (let [bullet {:mass 1
-                    :position (vec-add [1 0.5] (:position @particle))
-                    :velocity [6 0]}]
-        (add-entity *current-map* (Bullet. (atom bullet) 40)))
-      (swap! *guy-extra-forces* conj [-3 0]))
+    (if (*command-state-map* 32)
+      (do
+        ;; firing?
+        (let [cooldown (or (:firing-cooldown @particle) 0)
+              [vx _] (:velocity @particle)
+              bullet-direction (if (> vx 0) 1 -1)
+              bullet {:mass 1
+                      :position (vec-add [(if (> vx 0) 1 0) 0.5] (:position @particle))
+                      :velocity [(* bullet-direction 6) 0]}]
+          
+          (if (> cooldown 0)
+            ;; can't fire yet
+            (swap! particle conj {:firing-cooldown (- cooldown 1)})
+            (do
+              ;; fire and reset the counter
+              (add-entity *current-map* (Bullet. (atom bullet) 40))
+              (swap! *guy-extra-forces* conj [(* -3.0 bullet-direction) 0])
+              (swap! particle conj {:firing-cooldown +firing-cooldown+})))))
+      ;; not firing
+      (swap! particle conj {:firing-cooldown 0}))
     
     (reset! particle (apply-particle-vs-map (integrate-particle @particle)
                                             *current-map*
@@ -197,7 +234,9 @@
 
   showoff.showoff.Drawable
   (draw [guy ctx]
-    (draw-sprite ctx *guy-sprite* (:position @particle))))
+    (let [[vx _] (:velocity @particle)
+          sprite (if (> vx 0) (nth *guy-sprites* 0) (nth *guy-sprites* 1))]
+      (draw-sprite ctx sprite (:position @particle)))))
 
 (def +guy-speed+ 3)
 
@@ -216,7 +255,7 @@
            guy-extra-forces
            (keyboard-velocity-generator (.-LEFT gevents/KeyCodes) [(- +guy-speed+) 0])
            (keyboard-velocity-generator (.-RIGHT gevents/KeyCodes) [+guy-speed+ 0])
-           (jump-velocity-generator #(to-rect *guy*) 110)
+           (jump-velocity-generator #(to-rect *guy*) 22 30)
            ]
           
           })))
@@ -266,11 +305,11 @@
   (with-img "sprites/sheet.png"
     (fn [sheet]
       (let [dest-dims showoff.showoff.*tile-in-world-dims*]
-        (set! *guy-sprite* (resize-nearest-neighbor sheet [16 0 16 16] dest-dims))
+        (set! *guy-sprites* [(resize-nearest-neighbor sheet [16 0 16 16] dest-dims)
+                             (resize-nearest-neighbor sheet [32 0 16 16] dest-dims)])
         (set! +map-symbols+
               {[255 255 255]
-               {:kind :image
-                :image (resize-nearest-neighbor sheet [0 0 16 16] dest-dims)}
+               {:kind :skip}
                
                [255 0 0]
                {:kind :image
