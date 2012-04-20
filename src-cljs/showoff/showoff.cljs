@@ -16,7 +16,7 @@
   Drawable
   (draw [_ _] false))
 
-(def +ticks-per-ms+ (/ 50 1000))
+(def +ticks-per-ms+ (/ 40 1000))
 (def +secs-per-tick+ (/ (* +ticks-per-ms+ 1000)))
 
 (def ^:dynamic *display* nil)
@@ -103,7 +103,7 @@ space taking into account the current viewport"
 (defn draw-sprite [ctx img [x y]]
   (let [[tx ty tw th] (transform [x y 1 1])
         [sw sh] (img-dims img)]
-    (.drawImage ctx img (Math/round tx) (Math/round ty))))
+    (.drawImage ctx img (Math/floor tx) (Math/floor ty))))
 
 (defn get-img [url]
   (let [img (js/Image.)]
@@ -482,7 +482,7 @@ space taking into account the current viewport"
     (let [vel (:velocity p)
           mag-velocity (vec-mag vel)
           drag-dir (vec-negate (vec-unit vel))]
-      (vec-scale drag-dir (* mag-velocity drag-coefficient)))))
+      (vec-scale drag-dir (* mag-velocity mag-velocity drag-coefficient)))))
 
 (defn gravity-force-generator [g]
   (fn [p]
@@ -531,19 +531,9 @@ space taking into account the current viewport"
             veldiff (vec-mag (vec-sub vel vel-due-to-force))
             pos (:position p)
             newpos (vec-add pos (vec-scale normal incursion))
-
-            newvel (if (< veldiff 0.1)
-                     ;; our motion is only due to forces accumulated
-                     ;; in 1 frame. project the velocity into the
-                     ;; contact normal plane
-                     (vec-sub vel (vec-scale normal (vec-dot normal vel)))
-
-                     ;; otherwise, compute velocity using our
-                     ;; coefficient of restitution
-                     (vec-add vel (vec-scale
-                                   normal
-                                   (* (+ 1 restitution)
-                                      (Math/abs (vec-dot normal vel))))))]
+            newvel (vec-add vel (vec-scale normal
+                                 (* (+ 1 restitution)
+                                    (Math/abs (vec-dot normal vel)))))]
         
         (conj p {:position newpos
                  :velocity newvel})))))

@@ -144,11 +144,7 @@
       ;; direction.
       :else
       (let [xvel (vec-dot [1 0] (:velocity p))]
-        (if (< (Math/abs xvel) 0.01)
-          ;; stop us completely if we're not moving very fast
-          (vec-scale [1 0] (- xvel)) ;; fixme: compute force needed to stop
-          ;; otherwise slowdown by our factor
-          (vec-scale [1 0] (* -1 coefficient xvel)))))))
+        (vec-scale [1 0] (* -1 coefficient xvel))))))
 
 
 (defrecord Bullet [particle maxticks]
@@ -227,7 +223,7 @@
           sprite (if (> vx 0) (nth *guy-sprites* 0) (nth *guy-sprites* 1))]
       (draw-sprite ctx sprite (:position @particle)))))
 
-(def +guy-speed+ 12)
+(def +guy-speed+ 30)
 
 (def *guy*
   (Guy.
@@ -238,7 +234,7 @@
           ;; bring to a stop quickly
           :force-generators
           
-          [(drag-force-generator 0.8)
+          [(drag-force-generator 2.5)
            (ground-friction-generator #(to-rect *guy*) 30)
            (gravity-force-generator 16)
            guy-extra-forces
@@ -246,7 +242,7 @@
             (.-LEFT gevents/KeyCodes) [(- +guy-speed+) 0])
            (keyboard-velocity-generator
             (.-RIGHT gevents/KeyCodes) [+guy-speed+ 0])
-           (jump-velocity-generator #(to-rect *guy*) 200 8)
+           (jump-velocity-generator #(to-rect *guy*) 300 14)
            ]
           
           })))
@@ -254,7 +250,7 @@
 (defn guy-particle []
   @(:particle *guy*))
 
-(def +viewport-spring-constant+ 40)
+(def +viewport-spring-constant+ 50)
 (def +viewport-drag-coefficient+ 3)
 (def +viewport-max-displacement+ 2)
 
