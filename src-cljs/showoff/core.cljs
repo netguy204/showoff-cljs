@@ -11,7 +11,8 @@
                                 draw-entities img-dims context filled-rect
                                 color map-collisions rect->idxs idx->coords
                                 resize-nearest-neighbor record-vs-rect
-                                set-display-and-viewport cycle-once]))
+                                set-display-and-viewport cycle-once
+                                head-bumped-map]))
   (:require (goog.dom :as dom)
             (goog.string :as string)
             (goog.string.format :as format)
@@ -114,11 +115,19 @@
           (swap! state assoc :jumping true)
           [0 (- up-vel)])
 
+
+        ;; bumped head, drain fuel, fall like a rock
+        (head-bumped-map *current-map* (rect-gen))
+        (do
+          (swap! state conj {:jump-fuel 0})
+          [0 0])
+        
         ;; can't jump, we're not supported. try to use fuel
         (:jumping @state)
         (do
           (let [fuel (:jump-fuel @state)]
-            (reset! state (conj @state {:jump-fuel (dec fuel)}))
+            (swap! state conj
+                   {:jump-fuel (- fuel showoff.showoff.+secs-per-tick+)})
 
             (if (> fuel 0)
               [0 (- (* (/ fuel jump-fuel) up-vel))]
@@ -227,7 +236,7 @@
 
 (def *guy*
   (Guy.
-   (atom {:mass 3
+   (atom {:mass 5
           :position [2 2]
           :velocity [0 0]
           
@@ -242,7 +251,7 @@
             (.-LEFT gevents/KeyCodes) [(- +guy-speed+) 0])
            (keyboard-velocity-generator
             (.-RIGHT gevents/KeyCodes) [+guy-speed+ 0])
-           (jump-velocity-generator #(to-rect *guy*) 300 14)
+           (jump-velocity-generator #(to-rect *guy*) 300 0.5)
            ]
           
           })))

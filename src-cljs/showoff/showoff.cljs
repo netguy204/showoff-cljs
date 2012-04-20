@@ -16,7 +16,7 @@
   Drawable
   (draw [_ _] false))
 
-(def +ticks-per-ms+ (/ 40 1000))
+(def +ticks-per-ms+ (/ 30 1000))
 (def +secs-per-tick+ (/ (* +ticks-per-ms+ 1000)))
 
 (def ^:dynamic *display* nil)
@@ -470,7 +470,13 @@ space taking into account the current viewport"
   (let [[rx ry rw rh] rect
         half-width (* 0.5 rw)
         maxy (+ ry rh)
-        test-rect [(+ rx (* 0.5 half-width)) maxy half-width 0.3]]
+        test-rect [(+ rx (* 0.5 half-width)) maxy half-width 0.1]]
+    (not (empty? (map-collisions map test-rect)))))
+
+(defn head-bumped-map [map rect]
+  (let [[rx ry rw rh] rect
+        half-width (* 0.5 rw)
+        test-rect [(+ rx (* 0.5 half-width)) ry half-width 0.1]]
     (not (empty? (map-collisions map test-rect)))))
 
 ;;; particles
@@ -505,8 +511,14 @@ space taking into account the current viewport"
         base-vel (accumulate-from-generators p (:velocity-generators p) (:velocity p))
         base-pos (accumulate-from-generators p (:offset-generators p) (:position p))
         acc (vec-scale force (/ (:mass p)))
-        vel (vec-add base-vel (vec-scale acc +secs-per-tick+))
-        pos (vec-add base-pos (vec-scale vel +secs-per-tick+))]
+        last-acc (vec-scale (or (:last-forces p) [0 0]) (/ (:mass p)))
+        pos (vec-add
+             base-pos
+             (vec-add (vec-scale base-vel +secs-per-tick+)
+                      (vec-scale last-acc (* 0.5 +secs-per-tick+ +secs-per-tick+))))
+        vel (vec-add
+             base-vel
+             (vec-scale (vec-add last-acc acc) (/ +secs-per-tick+ 2)))]
     
     (conj p {:position pos
              :velocity vel
