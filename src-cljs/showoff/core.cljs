@@ -83,7 +83,7 @@
     (gevents/listen doc (.-KEYUP gevents/EventType) keyup)))
 
 (def *guy-sprites* nil)
-(def *hud-sprite* (get-img "hud/hud.png"))
+(def *hud-sprite* nil)
 
 ;; a velocity generator function produces a function that takes a
 ;; particle and returns a velocity
