@@ -16,7 +16,7 @@
   Drawable
   (draw [_ _] false))
 
-(def +ticks-per-ms+ (/ 30 1000))
+(def +ticks-per-ms+ (/ 35 1000))
 (def +secs-per-tick+ (/ (* +ticks-per-ms+ 1000)))
 
 (def ^:dynamic *display* nil)
@@ -171,6 +171,64 @@ space taking into account the current viewport"
                       (Math/ceil rw) (Math/ceil rh))))
 
        canvas)))
+
+;;; fonts
+
+(defn extract-char-images [img char-dims num-chars scale color]
+  (let [[iw ih] (img-dims img)
+        [cw ch] char-dims
+        pixels-per-char (* cw ch)
+        fw (* cw scale)
+        fh (* ch scale)
+        chars-in-row (/ iw cw)
+        pdata (get-pixel-data img)]
+    (for [idx (range num-chars)]
+      (let [oy (* ch (Math/floor (/ idx chars-in-row)))
+            ox (* cw (mod idx chars-in-row))
+            out (make-canvas [fw fh])
+            ctx (context out)]
+        (doseq [pxidx (range pixels-per-char)]
+          (let [chy (Math/floor (/ pxidx cw))
+                chx (mod pxidx cw)
+                pix (get-pixel pdata (+ ox chx) (+ oy chy))]
+            (when (= pix [0 0 0])
+              (set! (.-fillStyle ctx) color)
+              (.fillRect ctx (* chx scale) (* chy scale) scale scale))))
+        out))))
+
+(defn load-font [img characters char-dims scale color]
+  (let [characters (.toUpperCase characters)
+        [cw ch] char-dims
+        images (extract-char-images img char-dims (count characters) scale color)
+        font (zipmap characters images)
+        font (conj font {:dims [(* cw scale) (* ch scale)]})]
+    font))
+
+(defn with-loaded-font [path characters char-dims scale color callback]
+  (with-img path
+    (fn [img]
+      (callback (load-font img characters char-dims scale color)))))
+
+(defn draw-text [ctx font chrs pos]
+  (let [chrs (.toUpperCase chrs)
+        [ox oy] pos
+        [cw ch] (or (:dims font) [16 16])]
+    (dotimes [idx (count chrs)]
+      (let [ch (nth chrs idx)
+            img (font ch)]
+        (if img
+          (.drawImage ctx img (+ ox (* cw idx)) oy)
+          (do
+            (set! (.-fillStyle ctx) (color *default-color*))
+            (.fillRect ctx (+ ox (* cw idx)) oy cw ch)))))))
+
+(defn draw-text-centered [ctx font chrs pos]
+  (let [[cw ch] (or (:doms font) [16 16])
+        width (* cw (count chrs))
+        [px py] pos
+        x (- px (/ width 2))
+        y (- py (/ ch 2))]
+    (draw-text ctx font chrs [x y])))
 
 ;;; maps
 (def *alerted-symbols* (atom #{}))
@@ -470,7 +528,7 @@ space taking into account the current viewport"
   (let [[rx ry rw rh] rect
         half-width (* 0.5 rw)
         maxy (+ ry rh)
-        test-rect [(+ rx (* 0.5 half-width)) maxy half-width 0.1]]
+        test-rect [(+ rx (* 0.5 half-width)) maxy half-width 0.3]]
     (not (empty? (map-collisions map test-rect)))))
 
 (defn head-bumped-map [map rect]
@@ -577,6 +635,14 @@ space taking into account the current viewport"
 
 (def ^:private *last-time* (goog/now))
 (def ^:private *remaining-ticks* 0)
+(def ^:private *last-ticks-evaled* 0)
+(def ^:private *last-ticks-time* 0)
+(def ^:private *last-draw-time* 0)
+
+(defn stats-string []
+  (format "%3d ms/tick %3d ms/draw"
+          (Math/floor (/ *last-ticks-time* *last-ticks-evaled*))
+          *last-draw-time*))
 
 (defn cycle-once [draw-world]
   (let [now (goog/now)
@@ -587,12 +653,17 @@ space taking into account the current viewport"
     (set! *last-time* now)
     (set! *remaining-ticks* remaining-ticks)
 
-    (dotimes [ii ticks]
-      (tick-entities))
+    (let [start (goog/now)]
+      (dotimes [ii ticks]
+        (tick-entities))
+      (set! *last-ticks-time* (- (goog/now) start))
+      (set! *last-ticks-evaled* ticks))
 
     ;; only draw if we actually did something
     (when (> ticks 0)
-      (draw-world))
+      (let [start (goog/now)]
+        (draw-world)
+        (set! *last-draw-time* (- (goog/now) start))))
 
     ;; call us back!
     true))

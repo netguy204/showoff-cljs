@@ -12,7 +12,8 @@
                                 color map-collisions rect->idxs idx->coords
                                 resize-nearest-neighbor record-vs-rect
                                 set-display-and-viewport cycle-once
-                                head-bumped-map]))
+                                head-bumped-map with-loaded-font draw-text
+                                draw-text-centered stats-string]))
   (:require (goog.dom :as dom)
             (goog.string :as string)
             (goog.string.format :as format)
@@ -130,7 +131,8 @@
                    {:jump-fuel (- fuel showoff.showoff.+secs-per-tick+)})
 
             (if (> fuel 0)
-              [0 (- (* (/ fuel jump-fuel) up-vel))]
+              (let [fuel-factor (/ fuel jump-fuel)]
+                [0 (- (* fuel-factor fuel-factor up-vel))])
               [0 0])))
 
         ;; not supported, not trying to jump
@@ -232,7 +234,7 @@
           sprite (if (> vx 0) (nth *guy-sprites* 0) (nth *guy-sprites* 1))]
       (draw-sprite ctx sprite (:position @particle)))))
 
-(def +guy-speed+ 30)
+(def +guy-speed+ 40)
 
 (def *guy*
   (Guy.
@@ -243,7 +245,7 @@
           ;; bring to a stop quickly
           :force-generators
           
-          [(drag-force-generator 2.5)
+          [(drag-force-generator 2.0)
            (ground-friction-generator #(to-rect *guy*) 30)
            (gravity-force-generator 16)
            guy-extra-forces
@@ -251,7 +253,7 @@
             (.-LEFT gevents/KeyCodes) [(- +guy-speed+) 0])
            (keyboard-velocity-generator
             (.-RIGHT gevents/KeyCodes) [+guy-speed+ 0])
-           (jump-velocity-generator #(to-rect *guy*) 300 0.5)
+           (jump-velocity-generator #(to-rect *guy*) 400 0.5)
            ]
           
           })))
@@ -291,12 +293,19 @@
                             +viewport-spring-constant+))
       (drag-force-generator +viewport-drag-coefficient+)]})))
 
+(def *font-chars* "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789\"?!./")
+(def *default-font* nil)
+
 (defn with-prepared-assets [callback & {:keys [force-nocache]}]
   ;; a few assets we can resize lazily
   (with-img "hud/hud.png"
     (fn [hud]
       (set! *hud-sprite* (resize-nearest-neighbor hud showoff.showoff.*world-dims*))))
 
+  (with-loaded-font "sprites/basic-font.gif" *font-chars* [8 8] 2 (color [196 106 59])
+    (fn [font]
+      (set! *default-font* font)))
+  
   ;; its critical that +map-symbols+ be built before callback is
   ;; invoked
   (with-img (if force-nocache
@@ -391,7 +400,8 @@
   (draw-map *current-map*)
   ;;(draw-guy-collision-test)
   (draw-entities)
-  (draw-hud))
+  (draw-hud)
+  (draw-text-centered (context) *default-font* (stats-string) [372 438]))
 
 (def request-animation (or window/requestAnimationFrame
                            window/webkitRequestAnimationFrame
@@ -431,7 +441,6 @@
           (add-entity *current-map* *viewport*)
 
           (until-false #(cycle-once draw-world) 0))))))
-
 
 
 (defn ^:export map-viewer []
