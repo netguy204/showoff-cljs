@@ -90,10 +90,13 @@ space taking into account the current viewport"
 
 (defn color
   ([[r g b]]
-     (format "rgb(%f,%f,%f)" r g b))
+     (str "rgb(" r "," g "," b ")"))
 
   ([[r g b] a]
-     (format "rgba(%f,%f,%f,%f)" r g b a)))
+     (str "rgba(" r "," g "," b "," a ")")))
+
+(defn fill-style [ctx color]
+  (set! (.-fillStyle ctx) color))
 
 (defn filled-rect [ctx [x y] [w h] color]
   (let [[tx ty tw th] (transform [x y w h])]
@@ -124,10 +127,16 @@ space taking into account the current viewport"
     (.drawImage (context canvas) img 0 0)
     canvas))
 
+(defn get-context-image-data [ctx [w h]]
+  (.getImageData ctx 0 0 w h))
+
+(defn get-canvas-data [canvas]
+  (.-data (get-context-image-data (context canvas) (img-dims canvas))))
+
 (defn get-pixel-data [img]
   (let [canvas (img->canvas img)
         [w h] (img-dims img)]
-    {:data (-> (context canvas) (.getImageData 0 0 w h) (.-data))
+    {:data (get-canvas-data canvas)
      :dims [w h]}))
 
 (defn get-pixel-idx [pdata idx]
@@ -160,18 +169,26 @@ space taking into account the current viewport"
            [nw nh] dest-dims
            rw (/ nw sw)
            rh (/ nh sh)
+           dest-pixel-count (* nw nh)
            canvas (make-canvas dest-dims)
-           ctx (context canvas)]
-       
-       (doseq [x (range sw)
-               y (range sh)]
-         (let [px (+ x sx)
-               py (+ y sy)
-               pix (get-pixel pdata px py)]
-           (set! (.-fillStyle ctx) (color pix (get-pixel-alpha pdata px py)))
-           (.fillRect ctx (Math/floor (* x rw)) (Math/floor (* y rh))
-                      (Math/ceil rw) (Math/ceil rh))))
+           ctx (context canvas)
+           src-data (:data pdata)
+           [sfw _] (:dims pdata)
+           dest-image-data (get-context-image-data ctx dest-dims)
+           dest-data (.-data dest-image-data)]
 
+       (dotimes [idx dest-pixel-count]
+         (let [x (mod idx nw)
+               y (Math/floor (/ idx nw))
+               sxx (+ sx (Math/floor (/ x rw)))
+               syy (+ sy (Math/floor (/ y rh)))
+               dest-base (* idx 4)
+               src-base (* 4 (+ sxx (* syy sfw)))]
+           (aset dest-data dest-base (aget src-data src-base))
+           (aset dest-data (+ 1 dest-base) (aget src-data (+ 1 src-base)))
+           (aset dest-data (+ 2 dest-base) (aget src-data (+ 2 src-base)))
+           (aset dest-data (+ 3 dest-base) (aget src-data (+ 3 src-base)))))
+       (.putImageData ctx dest-image-data 0 0)
        canvas)))
 
 ;;; fonts
