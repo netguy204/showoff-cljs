@@ -403,19 +403,18 @@
   (draw-hud)
   (draw-text-centered (context) *default-font* (stats-string) [372 438]))
 
-(def request-animation (or window/requestAnimationFrame
+(def request-animation (or window/requestAnimationFrame   
                            window/webkitRequestAnimationFrame
                            window/mozRequestAnimationFrame
                            window/oRequestAnimationFrame
-                           window/msRequestAnimationFrame))
+                           window/msRequestAnimationFrame
+                           #(window/setTimeout % (/ 1000 60))))
 
 (defn until-false [callback timeout]
   (let [step (fn [] (when (callback) (until-false callback timeout)))]
-    (timer/callOnce step timeout)
-    (comment
-      (if (> timeout 0)
-       (timer/callOnce step timeout)
-       (request-animation step (display))))))
+    (if (<= timeout 0)
+      (request-animation step (display))
+      (timer/callOnce step timeout))))
 
 (defn ^:export main []
   ;;(repl/connect "http://localhost:9000/repl")
