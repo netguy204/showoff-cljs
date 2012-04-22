@@ -14,7 +14,10 @@
 
 (extend-type default
   Drawable
-  (draw [_ _] false))
+  (draw [_ _] false)
+
+  Tickable
+  (tick [_] nil))
 
 (def +ticks-per-ms+ (/ 35 1000))
 (def +secs-per-tick+ (/ (* +ticks-per-ms+ 1000)))
@@ -101,7 +104,7 @@ space taking into account the current viewport"
   [(.-width img) (.-height img)])
 
 (defn draw-sprite [ctx img [x y]]
-  (let [[tx ty tw th] (transform [x y 1 1])
+  (let [[tx ty] (transform [x y 1 1])
         [sw sh] (img-dims img)]
     (.drawImage ctx img (Math/floor tx) (Math/floor ty))))
 
@@ -148,14 +151,13 @@ space taking into account the current viewport"
     (aget data (+ idx 3))))
 
 (defn resize-nearest-neighbor
-  ([img dest-dims]
-     (let [[w h] (img-dims img)]
-       (resize-nearest-neighbor img [0 0 w h] dest-dims)))
+  ([pdata dest-dims]
+     (let [[w h] (:dims pdata)]
+       (resize-nearest-neighbor pdata [0 0 w h] dest-dims)))
   
-  ([img src-rect dest-dims]
+  ([pdata src-rect dest-dims]
      (let [[sx sy sw sh] src-rect
            [nw nh] dest-dims
-           pdata (get-pixel-data img)
            rw (/ nw sw)
            rh (/ nh sh)
            canvas (make-canvas dest-dims)
@@ -167,7 +169,7 @@ space taking into account the current viewport"
                py (+ y sy)
                pix (get-pixel pdata px py)]
            (set! (.-fillStyle ctx) (color pix (get-pixel-alpha pdata px py)))
-           (.fillRect ctx (* x rw) (* y rh)
+           (.fillRect ctx (Math/floor (* x rw)) (Math/floor (* y rh))
                       (Math/ceil rw) (Math/ceil rh))))
 
        canvas)))
@@ -250,11 +252,16 @@ space taking into account the current viewport"
                    (js/alert (format "couldn't find map symbol %s" (pr-str pix))))))))]
     
    {:dims dims
-    :data data}))
+    :data (atom data)}))
 
 (defn get-map-idx [map idx]
-  (let [data (:data map)]
+  (let [data @(:data map)]
     (nth data idx)))
+
+(defn set-map-idx [map idx newvalue]
+  (swap! (:data map) assoc idx
+         (merge newvalue {:objects (atom #{})
+                          :coords (idx->coords map idx)})))
 
 (declare rect->idxs)
 
@@ -262,6 +269,10 @@ space taking into account the current viewport"
   (let [[mw _] (:dims map)]
     [(mod idx mw)
      (Math/floor (/ idx mw))]))
+
+(defn coords->idx [map [x y]]
+  (let [[mw _] (:dims map)]
+    (+ (Math/floor x) (* (Math/floor y) mw))))
 
 (defn draw-map [map]
   (let [[mw _] (:dims map)
@@ -563,6 +574,10 @@ space taking into account the current viewport"
   (reduce (fn [result func] (vec-add result (func p)))
           initial
           generators))
+
+(defn round-to-pixel [[vx vy]]
+  (let [[tw th] *tile-in-world-dims*]
+    [(/ (Math/round (* vx tw 2)) tw 2) (/ (Math/round (* vy th 2)) th 2)]))
 
 (defn integrate-particle [p]
   (let [force (accumulate-from-generators p (:force-generators p) [0 0])

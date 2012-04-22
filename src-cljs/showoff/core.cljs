@@ -93,11 +93,11 @@
       value
       [0 0])))
 
-(defn jump-velocity-generator [rect-gen up-vel jump-fuel]
+(defn jump-velocity-generator [map rect-gen up-vel jump-fuel]
   (let [state (atom {:jump-fuel jump-fuel
                      :jumping false})]
    (fn [p]
-     (let [supported (supported-by-map *current-map* (rect-gen))]
+     (let [supported (supported-by-map @map (rect-gen))]
        (cond
         ;; not trying to jump
         (not (*command-state-map* (.-UP gevents/KeyCodes)))
@@ -118,7 +118,7 @@
 
 
         ;; bumped head, drain fuel, fall like a rock
-        (head-bumped-map *current-map* (rect-gen))
+        (head-bumped-map @map (rect-gen))
         (do
           (swap! state conj {:jump-fuel 0})
           [0 0])
@@ -139,11 +139,11 @@
         :else
         [0 0])))))
 
-(defn ground-friction-generator [rect-gen coefficient]
+(defn ground-friction-generator [map rect-gen coefficient]
   (fn [p]
     (cond
       ;; not applicable if we're not standing on something
-      (not (supported-by-map *current-map* (rect-gen)))
+      (not (supported-by-map @map (rect-gen)))
       [0 0]
 
       ;; also not applicable if the player is trying to move
@@ -246,14 +246,14 @@
           :force-generators
           
           [(drag-force-generator 2.0)
-           (ground-friction-generator #(to-rect *guy*) 30)
+           (ground-friction-generator *current-map* #(to-rect *guy*) 30)
            (gravity-force-generator 16)
            guy-extra-forces
            (keyboard-velocity-generator
             (.-LEFT gevents/KeyCodes) [(- +guy-speed+) 0])
            (keyboard-velocity-generator
             (.-RIGHT gevents/KeyCodes) [+guy-speed+ 0])
-           (jump-velocity-generator #(to-rect *guy*) 400 0.5)
+           (jump-velocity-generator *current-map* #(to-rect *guy*) 400 0.5)
            ]
           
           })))
