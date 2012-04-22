@@ -252,16 +252,16 @@ space taking into account the current viewport"
                    (js/alert (format "couldn't find map symbol %s" (pr-str pix))))))))]
     
    {:dims dims
-    :data (atom data)}))
+    :data (apply array data)}))
 
 (defn get-map-idx [map idx]
-  (let [data @(:data map)]
-    (nth data idx)))
+  (let [data (:data map)]
+    (aget data idx)))
 
 (defn set-map-idx [map idx newvalue]
-  (swap! (:data map) assoc idx
-         (merge newvalue {:objects (atom #{})
-                          :coords (idx->coords map idx)})))
+  (aset (:data map) idx
+        (merge newvalue {:objects (atom #{})
+                         :coords (idx->coords map idx)})))
 
 (declare rect->idxs)
 
@@ -275,32 +275,35 @@ space taking into account the current viewport"
     (+ (Math/floor x) (* (Math/floor y) mw))))
 
 (defn draw-map [map]
-  (let [[mw _] (:dims map)
+  (let [[mw mh] (:dims map)
         ctx (context)
-        [dx dy] *tile-in-world-dims*
-        idxs (rect->idxs map (viewport-rect))
-        [ox oy ow oh] (transform (idx->rect map (first idxs)))
-        [otx oty] (idx->coords map (first idxs))]
+        [ox oy ow oh] (viewport-rect)
+        [tw th] *tile-in-world-dims*
+        otx (Math/floor ox)
+        oty (Math/floor oy)
+        offx (- otx ox) ;; additive amount to fractionally offset tiles
+        offy (- oty oy)
+        rngx (- (Math/ceil (+ ox ow))
+                (Math/floor ox))
+        rngy (- (Math/ceil (+ oy oh))
+                (Math/floor oy))
+        num-idxs (* rngx rngy)
+        map-data (:data map)]
 
-    (doseq [idx idxs]
-      (let [tx (mod idx mw)
-            ty (Math/floor (/ idx mw))
-            rec (get-map-idx map idx)
-            tx (+ ox (* (- tx otx) ow))
-            ty (+ oy (* (- ty oty) oh))]
-        (cond
-          (nil? rec)
-          (filled-rect ctx [tx ty] [1 1] (color *default-color*))
-
-          (= (rec :kind) :skip)
-          nil
-          
-          (= (rec :kind) :rect)
-          (filled-rect ctx [tx ty] [1 1]
-                       (color (rec :color)))
-              
-          (= (rec :kind) :image)
-          (.drawImage ctx (:image rec) (Math/floor tx) (Math/floor ty)))))))
+    (dotimes [ii num-idxs]
+      (let [viewrow (Math/floor (/ ii rngx))
+            viewcol (mod ii rngx)
+            maprow (+ viewrow oty)
+            mapcol (+ viewcol otx)
+            tx (+ viewcol offx)
+            ty (+ viewrow offy)
+            drawx (* tw tx)
+            drawy (* th ty)
+            mapidx (+ mapcol (* maprow mw))]
+        (if (and (>= maprow 0) (>= mapcol 0)
+                 (< maprow mh) (< mapcol mw)
+                 (= ((aget map-data mapidx) :kind) :image))
+          (.drawImage ctx ((aget map-data mapidx) :image) (Math/floor drawx) (Math/floor drawy)))))))
 
 (defn move-object [map obj src-idxs dest-idxs]
   ;; remove from old locations
