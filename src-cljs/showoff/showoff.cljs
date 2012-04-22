@@ -666,6 +666,10 @@ space taking into account the current viewport"
   (when (and map (satisfies? Rectable e))
     (move-object map e (rect->idxs map (to-rect e)) nil)))
 
+(defn clear-entities [map]
+  (doseq [e @*entities*]
+    (remove-entity map e)))
+
 ;;; game loop
 
 (def ^:private *last-time* (goog/now))
@@ -674,12 +678,15 @@ space taking into account the current viewport"
 (def ^:private *last-ticks-time* 0)
 (def ^:private *last-draw-time* 0)
 
+(defn reset-tick-clock []
+  (set! *last-time* (goog/now)))
+
 (defn stats-string []
   (format "%3d ms/tick %3d ms/draw"
           (Math/floor (/ *last-ticks-time* *last-ticks-evaled*))
           *last-draw-time*))
 
-(defn cycle-once [draw-world]
+(defn cycle-once [after-ticks]
   (let [now (goog/now)
         remaining-ticks (+ *remaining-ticks* (* (- now *last-time*) +ticks-per-ms+))
         ticks (Math/floor remaining-ticks)
@@ -694,12 +701,8 @@ space taking into account the current viewport"
       (set! *last-ticks-time* (- (goog/now) start))
       (set! *last-ticks-evaled* ticks))
 
-    ;; only draw if we actually did something
-    (when (> ticks 0)
-      (let [start (goog/now)]
-        (draw-world)
-        (set! *last-draw-time* (- (goog/now) start))))
-
-    ;; call us back!
-    true))
+    (let [start (goog/now)
+          result (after-ticks ticks)]
+      (set! *last-draw-time* (- (goog/now) start))
+      result)))
 
