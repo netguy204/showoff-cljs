@@ -98,7 +98,7 @@ space taking into account the current viewport"
 (defn fill-style [ctx color]
   (set! (.-fillStyle ctx) color))
 
-(defn filled-rect [ctx [x y] [w h] color]
+(defn filled-rect [ctx [x y w h] color]
   (let [[tx ty tw th] (transform [x y w h])]
     (set! (.-fillStyle ctx) color)
     (.fillRect ctx tx ty tw th)))
@@ -380,6 +380,12 @@ space taking into account the current viewport"
 (defn rect-maxy [[_ ay _ ah]]
   (+ ay ah))
 
+(defn rect-width [[_ _ w _]]
+  w)
+
+(defn rect-height [[_ _ _ h]]
+  h)
+
 (defn rect-minmax [[ax ay aw ah]]
   [ax ay (+ ax aw) (+ ay ah)])
 
@@ -559,7 +565,7 @@ space taking into account the current viewport"
   (let [[rx ry rw rh] rect
         half-width (* 0.5 rw)
         maxy (+ ry rh)
-        test-rect [(+ rx (* 0.5 half-width)) maxy half-width 0.3]]
+        test-rect [(+ rx (* 0.5 half-width)) maxy half-width 0.1]]
     (not (empty? (map-collisions map test-rect)))))
 
 (defn head-bumped-map [map rect]
@@ -599,10 +605,23 @@ space taking into account the current viewport"
   (let [[tw th] *tile-in-world-dims*]
     [(/ (Math/round (* vx tw 2)) tw 2) (/ (Math/round (* vy th 2)) th 2)]))
 
+(defn sum-overriding-in-direction [a b]
+  "sum b into a but a . bhat = |b|"
+  (let [bdir (vec-unit b)
+        a-in-bdir (vec-dot a bdir)
+        a-without-bdir (vec-sub a (vec-scale bdir a-in-bdir))]
+    (vec-add a-without-bdir b)))
+
 (defn integrate-particle [p]
   (let [force (accumulate-from-generators p (:force-generators p) [0 0])
-        base-vel (accumulate-from-generators p (:velocity-generators p) (:velocity p))
-        base-pos (accumulate-from-generators p (:offset-generators p) (:position p))
+        ;; velocity generators should override whatever is going on in
+        ;; the direction they produce data
+        generated-vel (accumulate-from-generators p (:velocity-generators p) [0 0])
+        base-vel (if (= generated-vel [0 0])
+                   (:velocity p)
+                   (sum-overriding-in-direction (:velocity p) generated-vel))
+        
+        base-pos (:position p)
         acc (vec-scale force (/ (:mass p)))
         last-acc (vec-scale (or (:last-forces p) [0 0]) (/ (:mass p)))
         pos (vec-add
@@ -688,18 +707,24 @@ space taking into account the current viewport"
 
 (defn cycle-once [after-ticks]
   (let [now (goog/now)
-        remaining-ticks (+ *remaining-ticks* (* (- now *last-time*) +ticks-per-ms+))
+        elapsed-time (- now *last-time*)
+        remaining-ticks (+ *remaining-ticks* (* elapsed-time +ticks-per-ms+))
         ticks (Math/floor remaining-ticks)
         remaining-ticks (- remaining-ticks ticks)]
     
     (set! *last-time* now)
-    (set! *remaining-ticks* remaining-ticks)
 
-    (let [start (goog/now)]
-      (dotimes [ii ticks]
-        (tick-entities))
-      (set! *last-ticks-time* (- (goog/now) start))
-      (set! *last-ticks-evaled* ticks))
+    ;; we assume delays in excess of 2 seconds mean that the browser
+    ;; stopped calling us because we were in the background. we don't
+    ;; tick or draw in this case but wait for the next refresh.
+    (when (< elapsed-time 2000)
+      (set! *remaining-ticks* remaining-ticks)
+      
+      (let [start (goog/now)]
+        (dotimes [ii ticks]
+          (tick-entities))
+        (set! *last-ticks-time* (- (goog/now) start))
+        (set! *last-ticks-evaled* ticks)))
 
     (let [start (goog/now)
           result (after-ticks ticks)]

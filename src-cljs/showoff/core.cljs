@@ -70,12 +70,15 @@
 
 (def +map-symbols+ nil) ;; with-prepare-assets will fill this in
 
+(defn- key-remapper [code]
+  (condp code =
+    code))
 
 (defn- keydown [e]
-  (set! *command-state-map* (conj *command-state-map* (.-keyCode e))))
+  (set! *command-state-map* (conj *command-state-map* (key-remapper (.-keyCode e)))))
 
 (defn- keyup [e]
-  (set! *command-state-map* (disj *command-state-map* (.-keyCode e))))
+  (set! *command-state-map* (disj *command-state-map* (key-remapper (.-keyCode e)))))
 
 (defn prepare-input []
   (let [doc js/document]
@@ -131,8 +134,7 @@
                    {:jump-fuel (- fuel showoff.showoff.+secs-per-tick+)})
 
             (if (> fuel 0)
-              (let [fuel-factor (/ fuel jump-fuel)]
-                [0 (- (* fuel-factor fuel-factor up-vel))])
+              [0 (- up-vel)]
               [0 0])))
 
         ;; not supported, not trying to jump
