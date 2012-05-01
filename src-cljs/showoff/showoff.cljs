@@ -3,7 +3,8 @@
             [goog.string.format :as format]
             [showoff.vec :as vec]
             [showoff.rect :as rect]
-            [showoff.gfx :as gfx]))
+            [showoff.gfx :as gfx]
+            [showoff.map :as map]))
 
 (defprotocol Tickable
   (tick [obj]))
@@ -154,118 +155,10 @@ space taking into account the current viewport"
     (draw-text ctx font chrs [x y])))
 
 ;;; maps
-(def *alerted-symbols* (atom #{}))
 
-(defn load-map [img map-symbols]
-  (let [[w h] (gfx/img-dims img)
-        dims [w h]
-        pdata (gfx/get-pixel-data img)
-        data (into
-           []
-           (for [idx (range (* w h))]
-             (let [pix (gfx/get-pixel-idx pdata (* 4 idx))
-                   sym (map-symbols pix)]
-               (if sym
-                 (conj sym {:objects (atom #{})
-                            :coords (idx->coords {:dims dims} idx)})
-                 (when (not (@*alerted-symbols* pix))
-                   (swap! *alerted-symbols* conj pix)
-                   (js/alert (format "couldn't find map symbol %s" (pr-str pix))))))))]
-    
-   {:dims dims
-    :data (apply array data)}))
-
-(defn get-map-idx [map idx]
-  (let [data (:data map)]
-    (aget data idx)))
-
-(defn set-map-idx [map idx newvalue]
-  (aset (:data map) idx
-        (merge newvalue {:objects (atom #{})
-                         :coords (idx->coords map idx)})))
-
-(declare rect->idxs)
-
-(defn idx->coords [map idx]
-  (let [[mw _] (:dims map)]
-    [(mod idx mw)
-     (Math/floor (/ idx mw))]))
-
-(defn coords->idx [map [x y]]
-  (let [[mw _] (:dims map)]
-    (+ (Math/floor x) (* (Math/floor y) mw))))
-
-(defn draw-map [ctx map]
-  (let [[mw mh] (:dims map)
-        [ox oy ow oh] (viewport-rect)
-        [tw th] *tile-in-world-dims*
-        otx (Math/floor ox)
-        oty (Math/floor oy)
-        offx (- otx ox) ;; additive amount to fractionally offset tiles
-        offy (- oty oy)
-        rngx (- (Math/ceil (+ ox ow))
-                (Math/floor ox))
-        rngy (- (Math/ceil (+ oy oh))
-                (Math/floor oy))
-        num-idxs (* rngx rngy)
-        map-data (:data map)]
-
-    (dotimes [ii num-idxs]
-      (let [viewrow (Math/floor (/ ii rngx))
-            viewcol (mod ii rngx)
-            maprow (+ viewrow oty)
-            mapcol (+ viewcol otx)
-            tx (+ viewcol offx)
-            ty (+ viewrow offy)
-            drawx (* tw tx)
-            drawy (* th ty)
-            mapidx (+ mapcol (* maprow mw))]
-        (if (and (>= maprow 0) (>= mapcol 0)
-                 (< maprow mh) (< mapcol mw)
-                 (= ((aget map-data mapidx) :kind) :image))
-          (.drawImage ctx ((aget map-data mapidx) :image) (Math/floor drawx) (Math/floor drawy)))))))
-
-(defn move-object [map obj src-idxs dest-idxs]
-  ;; remove from old locations
-  (doseq [idx src-idxs]
-    (let [rec (get-map-idx map idx)
-          objects (:objects rec)]
-      (reset! objects (disj @objects obj))))
-
-  ;; insert into new locations
-  (doseq [idx dest-idxs]
-    (let [rec (get-map-idx map idx)
-          objects (:objects rec)]
-      (reset! objects (conj @objects obj)))))
 
 ;;; rects
 
-(defn rect->idxs-all [map rect]
-  (let [[rx ry rw rh] rect
-        [mw mh] (:dims map)
-        rngx (- (Math/ceil (+ rw rx))
-                (Math/floor rx))
-        rngy (- (Math/ceil (+ rh ry))
-                (Math/floor ry))
-        ox (Math/floor rx)
-        oy (Math/floor ry)]
-
-    (for [ix (range rngx)
-          iy (range rngy)]
-      (let [x (+ ox ix)
-            y (+ oy iy)]
-        (when (and (>= x 0) (>= y 0) (< x mw) (< y mh))
-          (+ x (* y mw)))))))
-
-(defn rect->idxs [map rect]
-  (filter (fn [idx] (not (nil? idx))) (rect->idxs-all map rect)))
-
-(defn idx->rect [map idx]
-  (let [[mw _] (:dims map)]
-    [(mod idx mw)
-     (Math/floor (/ idx mw))
-     1
-     1]))
 
 ;;; collisions
 
@@ -274,8 +167,8 @@ space taking into account the current viewport"
 (defn map-collisions [map rect]
   (filter
    (fn [res] (not (nil? res)))
-   (for [idx (rect->idxs map rect)]
-     (let [rec (get-map-idx map idx)]
+   (for [idx (map/rect->idxs map rect)]
+     (let [rec (map/get-map-idx map idx)]
        (cond
          ;; not solid
          (not (:collidable rec))
@@ -456,12 +349,12 @@ space taking into account the current viewport"
 (defn add-entity [map e]
   (swap! *entities* conj e)
   (when (and map (satisfies? Rectable e))
-    (move-object map e nil (rect->idxs map (to-rect e)))))
+    (map/move-object map e nil (map/rect->idxs map (to-rect e)))))
 
 (defn remove-entity [map e]
   (swap! *entities* disj e)
   (when (and map (satisfies? Rectable e))
-    (move-object map e (rect->idxs map (to-rect e)) nil)))
+    (map/move-object map e (map/rect->idxs map (to-rect e)) nil)))
 
 (defn clear-entities [map]
   (doseq [e @*entities*]
