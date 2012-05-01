@@ -1,9 +1,9 @@
 (ns showoff.showoff
-  (:require [goog.dom :as dom]
-            [goog.string :as string]
+  (:require [goog.string :as string]
             [goog.string.format :as format]
             [showoff.vec :as vec]
-            [showoff.rect :as rect]))
+            [showoff.rect :as rect]
+            [showoff.gfx :as gfx]))
 
 (defprotocol Tickable
   (tick [obj]))
@@ -32,12 +32,6 @@
 
 (def *default-color* [255 0 255])
 (def *entities* (atom #{}))
-
-(defn make-canvas [[w h]]
-  (let [canvas (dom/createDom "canvas")]
-    (set! (.-width canvas) w)
-    (set! (.-height canvas) h)
-    canvas))
 
 (defn viewport-rect []
   (*viewport-function*))
@@ -74,20 +68,6 @@ space taking into account the current viewport"
     (callback))
   (.restore ctx))
 
-(defn context
-  ([] (context *display*))
-  ([canvas] (let [ctx (.getContext canvas "2d")]
-              (set! (.-imageSmoothingEnabled ctx) false)
-              ctx)))
-
-(defn clear
-  ([] (clear *display*))
-  ([canvas]
-     (let [w (.-width canvas)
-           h (.-height canvas)
-           ctx (context canvas)]
-       (.clearRect ctx 0 0 w h))))
-
 (def format string/format)
 
 (defn color
@@ -105,61 +85,9 @@ space taking into account the current viewport"
     (set! (.-fillStyle ctx) color)
     (.fillRect ctx tx ty tw th)))
 
-(defn img-dims [img]
-  [(.-width img) (.-height img)])
-
 (defn draw-sprite [ctx img [x y]]
-  (let [[tx ty] (transform [x y 1 1])
-        [sw sh] (img-dims img)]
+  (let [[tx ty] (transform [x y 1 1])]
     (.drawImage ctx img (Math/floor tx) (Math/floor ty))))
-
-(defn get-img [url]
-  (let [img (js/Image.)]
-    (set! (.-src img) url)
-    img))
-
-(defn with-img [url callback]
-  (let [img (get-img url)]
-    (set! (.-onload img) (fn [] (callback img)))
-    img))
-
-(defn img->canvas [img]
-  (let [[w h] (img-dims img)
-        canvas (make-canvas [w h])]
-    (.drawImage (context canvas) img 0 0)
-    canvas))
-
-(defn get-context-image-data [ctx [w h]]
-  (.getImageData ctx 0 0 w h))
-
-(defn get-canvas-data [canvas]
-  (.-data (get-context-image-data (context canvas) (img-dims canvas))))
-
-(defn get-pixel-data [img]
-  (let [canvas (img->canvas img)
-        [w h] (img-dims img)]
-    {:data (get-canvas-data canvas)
-     :dims [w h]}))
-
-(defn get-pixel-idx [pdata idx]
-  (let [data (:data pdata)
-        r (aget data idx)
-        g (aget data (+ idx 1))
-        b (aget data (+ idx 2))]
-    [r g b]))
-
-(defn get-pixel [pdata x y]
-  (let [[w h] (:dims pdata)
-        idx (+ (* x 4) (* w y 4))]
-    (if (and (>= x 0) (>= y 0) (< x w) (< y h))
-      (get-pixel-idx pdata idx)
-      *default-color*)))
-
-(defn get-pixel-alpha [pdata x y]
-  (let [[w h] (:dims pdata)
-        data (:data pdata)
-        idx (+ (* x 4) (* w y 4))]
-    (aget data (+ idx 3))))
 
 (defn resize-nearest-neighbor
   ([pdata dest-dims]
@@ -167,51 +95,27 @@ space taking into account the current viewport"
        (resize-nearest-neighbor pdata [0 0 w h] dest-dims)))
   
   ([pdata src-rect dest-dims]
-     (let [[sx sy sw sh] src-rect
-           [nw nh] dest-dims
-           rw (/ nw sw)
-           rh (/ nh sh)
-           dest-pixel-count (* nw nh)
-           canvas (make-canvas dest-dims)
-           ctx (context canvas)
-           src-data (:data pdata)
-           [sfw _] (:dims pdata)
-           dest-image-data (get-context-image-data ctx dest-dims)
-           dest-data (.-data dest-image-data)]
-
-       (dotimes [idx dest-pixel-count]
-         (let [x (mod idx nw)
-               y (Math/floor (/ idx nw))
-               sxx (+ sx (Math/floor (/ x rw)))
-               syy (+ sy (Math/floor (/ y rh)))
-               dest-base (* idx 4)
-               src-base (* 4 (+ sxx (* syy sfw)))]
-           (aset dest-data dest-base (aget src-data src-base))
-           (aset dest-data (+ 1 dest-base) (aget src-data (+ 1 src-base)))
-           (aset dest-data (+ 2 dest-base) (aget src-data (+ 2 src-base)))
-           (aset dest-data (+ 3 dest-base) (aget src-data (+ 3 src-base)))))
-       (.putImageData ctx dest-image-data 0 0)
-       canvas)))
+     (gfx/map-nearest-neighbor pdata src-rect dest-dims gfx/pixel-identity)))
 
 ;;; fonts
 
 (defn extract-char-images [img char-dims num-chars scale color]
-  (let [[iw ih] (img-dims img)
+  (let [[iw ih] (gfx/img-dims img)
         [cw ch] char-dims
         pixels-per-char (* cw ch)
         fw (* cw scale)
         fh (* ch scale)
         chars-in-row (/ iw cw)
-        pdata (get-pixel-data img)]
+        pdata (gfx/get-pixel-data img)]
     (for [idx (range num-chars)]
       (let [oy (* ch (Math/floor (/ idx chars-in-row)))
             ox (* cw (mod idx chars-in-row))
-            out (make-canvas [fw fh])
-            ctx (context out)]
+            out (gfx/make-canvas [fw fh])
+            ctx (gfx/context out)]
         (doseq [pxidx (range pixels-per-char)]
           (let [chy (Math/floor (/ pxidx cw))
                 chx (mod pxidx cw)
-                pix (get-pixel pdata (+ ox chx) (+ oy chy))]
+                pix (gfx/get-pixel pdata (+ ox chx) (+ oy chy))]
             (when (= pix [0 0 0])
               (set! (.-fillStyle ctx) color)
               (.fillRect ctx (* chx scale) (* chy scale) scale scale))))
@@ -226,7 +130,7 @@ space taking into account the current viewport"
     font))
 
 (defn with-loaded-font [path characters char-dims scale color callback]
-  (with-img path
+  (gfx/with-img path
     (fn [img]
       (callback (load-font img characters char-dims scale color)))))
 
@@ -255,13 +159,13 @@ space taking into account the current viewport"
 (def *alerted-symbols* (atom #{}))
 
 (defn load-map [img map-symbols]
-  (let [[w h] (img-dims img)
+  (let [[w h] (gfx/img-dims img)
         dims [w h]
-        pdata (get-pixel-data img)
+        pdata (gfx/get-pixel-data img)
         data (into
            []
            (for [idx (range (* w h))]
-             (let [pix (get-pixel-idx pdata (* 4 idx))
+             (let [pix (gfx/get-pixel-idx pdata (* 4 idx))
                    sym (map-symbols pix)]
                (if sym
                  (conj sym {:objects (atom #{})
@@ -293,9 +197,8 @@ space taking into account the current viewport"
   (let [[mw _] (:dims map)]
     (+ (Math/floor x) (* (Math/floor y) mw))))
 
-(defn draw-map [map]
+(defn draw-map [ctx map]
   (let [[mw mh] (:dims map)
-        ctx (context)
         [ox oy ow oh] (viewport-rect)
         [tw th] *tile-in-world-dims*
         otx (Math/floor ox)
@@ -548,10 +451,9 @@ space taking into account the current viewport"
   (doseq [entity @*entities*]
     (tick entity)))
 
-(defn draw-entities []
-  (let [ctx (context)]
-    (doseq [entity @*entities*]
-      (draw entity ctx))))
+(defn draw-entities [ctx]
+  (doseq [entity @*entities*]
+    (draw entity ctx)))
 
 (defn add-entity [map e]
   (swap! *entities* conj e)
