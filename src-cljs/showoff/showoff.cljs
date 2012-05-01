@@ -154,12 +154,6 @@ space taking into account the current viewport"
         y (- py (/ ch 2))]
     (draw-text ctx font chrs [x y])))
 
-;;; maps
-
-
-;;; rects
-
-
 ;;; collisions
 
 (defmulti record-vs-rect #(:shape %1))
@@ -184,6 +178,19 @@ space taking into account the current viewport"
 
          :else
          nil)))))
+
+(defn move-check-map-collision [map [dx dy] rect on-x-collide on-y-collide]
+  (let [x-moved-rect (rect/offset rect [dx 0])
+        x-offset (if-let [hit-idx (first (map-collisions map x-moved-rect))]
+                   (do (on-x-collide hit-idx) 0)
+                   dx)
+
+        y-moved-rect (rect/offset rect [x-offset dy])
+        y-offset (if-let [hit-idx (first (map-collisions map y-moved-rect))]
+                   (do (on-y-collide hit-idx) 0)
+                   dy)]
+    
+    [x-offset y-offset]))
 
 (defmethod record-vs-rect :rect
   [rec rect]
