@@ -1,7 +1,9 @@
 (ns showoff.showoff
-  (:require (goog.dom :as dom)
-            (goog.string :as string)
-            (goog.string.format :as format)))
+  (:require [goog.dom :as dom]
+            [goog.string :as string]
+            [goog.string.format :as format]
+            [showoff.vec :as vec]
+            [showoff.rect :as rect]))
 
 (defprotocol Tickable
   (tick [obj]))
@@ -335,71 +337,7 @@ space taking into account the current viewport"
           objects (:objects rec)]
       (reset! objects (conj @objects obj)))))
 
-;;; vectors
-
-(defn vec-add [[ax ay] [bx by]]
-  [(+ ax bx) (+ ay by)])
-
-(defn vec-sub [[ax ay] [bx by]]
-  [(- ax bx) (- ay by)])
-
-(defn vec-mag [[ax ay]]
-  (Math/sqrt (+ (* ax ax) (* ay ay))))
-
-(defn vec-scale [[ax ay] scale]
-  [(* ax scale) (* ay scale)])
-
-(defn vec-unit [v]
-  (let [mag (vec-mag v)]
-    (if (> mag 0)
-      (vec-scale v (/ (vec-mag v)))
-      [0 0])))
-
-(defn vec-negate [[ax ay]]
-  [(- ax) (- ay)])
-
-(defn vec-dot [[ax ay] [bx by]]
-  (+ (* ax bx) (* ay by)))
-
-
 ;;; rects
-
-(defn rect-center [rect]
-  (let [[vx vy vw vh] rect]
-    (vec-add [vx vy] (vec-scale [vw vh] 0.5))))
-
-(defn rect-minx [[ax _ _ _]]
-  ax)
-
-(defn rect-maxx [[ax _ aw _]]
-  (+ ax aw))
-
-(defn rect-miny [[_ ay _ _]]
-  ay)
-
-(defn rect-maxy [[_ ay _ ah]]
-  (+ ay ah))
-
-(defn rect-width [[_ _ w _]]
-  w)
-
-(defn rect-height [[_ _ _ h]]
-  h)
-
-(defn rect-minmax [[ax ay aw ah]]
-  [ax ay (+ ax aw) (+ ay ah)])
-
-(defn rect-intersect [a b]
-  (let [[aminx aminy amaxx amaxy] (rect-minmax a)
-        [bminx bminy bmaxx bmaxy] (rect-minmax b)]
-   (not
-    (or (< amaxx bminx)
-        (> aminx bmaxx)
-        (< amaxy bminy)
-        (> aminy bmaxy)))))
-
-(defn rect-offset [[rx ry rw rh] [ox oy]]
-  [(+ rx ox) (+ ry oy) rw rh])
 
 (defn rect->idxs-all [map rect]
   (let [[rx ry rw rh] rect
@@ -453,72 +391,12 @@ space taking into account the current viewport"
          :else
          nil)))))
 
-(defn rectrect-horizontal-overlap [r1 r2]
-  "assumes that there is some overlap"
-  (let [[r1x _ r1w _] r1
-        [r2x _ r2w _] r2]
-    (- (min (+ r1x r1w)
-            (+ r2x r2w))
-       (max r1x r2x))))
-
-(defn rectrect-vertical-overlap [r1 r2]
-  "assuems that there is some overlap"
-  (let [[_ r1y _ r1h] r1
-        [_ r2y _ r2h] r2]
-    (- (min (+ r1y r1h)
-            (+ r2y r2h))
-       (max r1y r2y))))
-
-(defn rectrect-contact [r1 r2]
-  "assumes that r1 and r2 intersect, normal will push r1 from r2"
-  (let [ho (rectrect-horizontal-overlap r1 r2)
-        vo (rectrect-vertical-overlap r1 r2)]
-    (cond
-      ;; horizontal violation
-      (> vo ho)
-      (if (< (rect-minx r1) (rect-minx r2))
-        {:normal [-1 0]
-         :incursion ho}
-        {:normal [1 0]
-         :incursion ho})
-
-      ;; vertical violation
-      (> ho vo)
-      (if (< (rect-miny r1) (rect-miny r2))
-        {:normal [0 -1]
-         :incursion vo} 
-        {:normal [0 1]
-         :incursion vo})
-
-      ;; corner-shot
-      :else
-      (cond
-        ;; left side
-        (< (rect-minx r1) (rect-minx r2))
-        (if (< (rect-miny r1) (rect-maxy r2))
-          ;; top-left corner
-          {:normal (vec-unit [-1 -1])
-           :incursion (vec-mag [ho vo])} 
-          ;; bottom-left corner
-          {:normal (vec-unit [-1 1])
-           :incursion (vec-mag [ho vo])})
-
-        ;; right side
-        :else
-        (if (< (rect-miny r1) (rect-maxy r2))
-          ;; top-right corner
-          {:normal (vec-unit [1 -1])
-           :incursion (vec-mag [ho vo])} 
-          ;; bottom-right corner
-          {:normal (vec-unit [1 1])
-           :incursion (vec-mag [ho vo])})))))
-
 (defmethod record-vs-rect :rect
   [rec rect]
   (let [[mx my] (:coords rec)
         map-rect [mx my 1 1]]
-    (when (rect-intersect map-rect rect)
-      (rectrect-contact rect map-rect))))
+    (when (rect/intersect map-rect rect)
+      (rect/contact rect map-rect))))
 
 (def ^:private sqrt2 (Math/sqrt 2))
 
@@ -552,10 +430,10 @@ space taking into account the current viewport"
           bl (corner-test rx (+ ry rh))
           br (corner-test (+ rx rw) (+ ry rh))]
       (cond
-        tl {:normal (vec-unit [1 1]) :incursion tl}
-        tr {:normal (vec-unit [-1 1]) :incursion tr}
-        bl {:normal (vec-unit [1 -1]) :incursion bl}
-        br {:normal (vec-unit [-1 -1]) :incursion br}
+        tl {:normal (vec/unit [1 1]) :incursion tl}
+        tr {:normal (vec/unit [-1 1]) :incursion tr}
+        bl {:normal (vec/unit [1 -1]) :incursion bl}
+        br {:normal (vec/unit [-1 -1]) :incursion br}
         :else nil))))
 
 (defn idxrect-contact [map idx rect]
@@ -581,23 +459,23 @@ space taking into account the current viewport"
 (defn drag-force-generator [drag-coefficient]
   (fn [p]
     (let [vel (:velocity p)
-          mag-velocity (vec-mag vel)
-          drag-dir (vec-negate (vec-unit vel))]
-      (vec-scale drag-dir (* mag-velocity mag-velocity drag-coefficient)))))
+          mag-velocity (vec/mag vel)
+          drag-dir (vec/negate (vec/unit vel))]
+      (vec/scale drag-dir (* mag-velocity mag-velocity drag-coefficient)))))
 
 (defn gravity-force-generator [g]
   (fn [p]
     [0 (* (:mass p) g)]))
 
 (defn spring-force [displacement max-displacement spring-constant]
-  (let [mag-displacement (vec-mag displacement)
+  (let [mag-displacement (vec/mag displacement)
         diff (- mag-displacement max-displacement)]
     (if (> mag-displacement max-displacement)
-      (vec-scale (vec-unit displacement) (* spring-constant diff))
+      (vec/scale (vec/unit displacement) (* spring-constant diff))
       [0 0])))
 
 (defn accumulate-from-generators [p generators initial]
-  (reduce (fn [result func] (vec-add result (func p)))
+  (reduce (fn [result func] (vec/add result (func p)))
           initial
           generators))
 
@@ -607,10 +485,10 @@ space taking into account the current viewport"
 
 (defn sum-overriding-in-direction [a b]
   "sum b into a but a . bhat = |b|"
-  (let [bdir (vec-unit b)
-        a-in-bdir (vec-dot a bdir)
-        a-without-bdir (vec-sub a (vec-scale bdir a-in-bdir))]
-    (vec-add a-without-bdir b)))
+  (let [bdir (vec/unit b)
+        a-in-bdir (vec/dot a bdir)
+        a-without-bdir (vec/sub a (vec/scale bdir a-in-bdir))]
+    (vec/add a-without-bdir b)))
 
 (defn integrate-particle [p]
   (let [force (accumulate-from-generators p (:force-generators p) [0 0])
@@ -622,15 +500,15 @@ space taking into account the current viewport"
                    (sum-overriding-in-direction (:velocity p) generated-vel))
         
         base-pos (:position p)
-        acc (vec-scale force (/ (:mass p)))
-        last-acc (vec-scale (or (:last-forces p) [0 0]) (/ (:mass p)))
-        pos (vec-add
+        acc (vec/scale force (/ (:mass p)))
+        last-acc (vec/scale (or (:last-forces p) [0 0]) (/ (:mass p)))
+        pos (vec/add
              base-pos
-             (vec-add (vec-scale base-vel +secs-per-tick+)
-                      (vec-scale last-acc (* 0.5 +secs-per-tick+ +secs-per-tick+))))
-        vel (vec-add
+             (vec/add (vec/scale base-vel +secs-per-tick+)
+                      (vec/scale last-acc (* 0.5 +secs-per-tick+ +secs-per-tick+))))
+        vel (vec/add
              base-vel
-             (vec-scale (vec-add last-acc acc) (/ +secs-per-tick+ 2)))]
+             (vec/scale (vec/add last-acc acc) (/ +secs-per-tick+ 2)))]
     
     (conj p {:position pos
              :velocity vel
@@ -644,20 +522,20 @@ space taking into account the current viewport"
 
 (defn apply-particle-vs-map [p map rect restitution]
   (let [contacts (for [idx (map-collisions map rect)]
-                   (idxrect-contact map idx rect))
+                   (rect/contact map idx rect))
         temp (into [] contacts)]
     (if (empty? contacts)
       p
       (let [{:keys [normal incursion]} (max-incursion-contact contacts)
             vel (:velocity p)
-            vel-due-to-force (vec-scale (:last-forces p)
+            vel-due-to-force (vec/scale (:last-forces p)
                                         (* (/ (:mass p)) +secs-per-tick+))
-            veldiff (vec-mag (vec-sub vel vel-due-to-force))
+            veldiff (vec/mag (vec/sub vel vel-due-to-force))
             pos (:position p)
-            newpos (vec-add pos (vec-scale normal incursion))
-            newvel (vec-add vel (vec-scale normal
+            newpos (vec/add pos (vec/scale normal incursion))
+            newvel (vec/add vel (vec/scale normal
                                  (* (+ 1 restitution)
-                                    (Math/abs (vec-dot normal vel)))))]
+                                    (Math/abs (vec/dot normal vel)))))]
         
         (conj p {:position newpos
                  :velocity newvel})))))
