@@ -238,7 +238,9 @@
 
 (def +guy-speed+ 40)
 
-(def *guy*
+(def *guy* nil)
+
+(set! *guy*
   (Guy.
    (atom {:mass 5
           :position [2 2]

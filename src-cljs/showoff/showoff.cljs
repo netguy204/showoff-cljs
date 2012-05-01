@@ -231,7 +231,7 @@ space taking into account the current viewport"
         :else nil))))
 
 (defn idxrect-contact [map idx rect]
-  (record-vs-rect (get-map-idx map idx) rect))
+  (record-vs-rect (map/get-map-idx map idx) rect))
 
 (defn supported-by-map [map rect]
   (let [[rx ry rw rh] rect
@@ -316,8 +316,7 @@ space taking into account the current viewport"
 
 (defn apply-particle-vs-map [p map rect restitution]
   (let [contacts (for [idx (map-collisions map rect)]
-                   (rect/contact map idx rect))
-        temp (into [] contacts)]
+                   (rect/contact (map/idx->rect map idx) rect))]
     (if (empty? contacts)
       p
       (let [{:keys [normal incursion]} (max-incursion-contact contacts)

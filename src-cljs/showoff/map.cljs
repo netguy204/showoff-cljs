@@ -18,23 +18,20 @@
 
 (def *alerted-symbols* (atom #{}))
 
-;fixme
 (defn load [img map-symbols]
   (let [[w h] (gfx/img-dims img)
         dims [w h]
         pdata (gfx/get-pixel-data img)
-        data (into
-           []
-           (for [idx (range (* w h))]
-             (let [pix (gfx/get-pixel-idx pdata (* 4 idx))
-                   sym (map-symbols pix)]
-               (if sym
-                 (conj sym {:objects (atom #{})
-                            :coords (idx->coords {:dims dims} idx)})
-                 (when (not (@*alerted-symbols* pix))
-                   (swap! *alerted-symbols* conj pix)
-                   (js/alert
-                    (format "couldn't find map symbol %s" (pr-str pix))))))))]
+        data (for [idx (range (* w h))]
+               (let [pix (gfx/get-pixel-idx pdata (* 4 idx))
+                     sym (map-symbols pix)]
+                 (if sym
+                   (conj sym {:objects (atom #{})
+                              :coords (idx->coords {:dims dims} idx)})
+                   (when (not (@*alerted-symbols* pix))
+                     (swap! *alerted-symbols* conj pix)
+                     (js/alert
+                      (format "couldn't find map symbol %s" (pr-str pix)))))))]
     
    {:dims dims
     :data (apply array data)}))
@@ -76,6 +73,9 @@
   (let [data (:data map)]
     (aget data idx)))
 
+(defn get-map-coords [map coords]
+  (get-map-idx map (coords->idx map coords)))
+
 (defn set-map-idx [map idx newvalue]
   (aset (:data map) idx
         (merge newvalue {:objects (atom #{})
@@ -93,13 +93,6 @@
     (let [rec (get-map-idx map idx)
           objects (:objects rec)]
       (reset! objects (conj @objects obj)))))
-
-(defn with-objects-in-rect [map rect callback]
-  (doseq [idx (rect->idxs map rect)]
-    (let [rec (get-map-idx map idx)
-          objects (:objects rec)]
-      (doseq [obj @objects]
-        (callback obj)))))
 
 (defn rect->idxs-all [map rect]
   (let [[rx ry rw rh] rect
@@ -121,6 +114,13 @@
 (defn rect->idxs [map rect]
   (filter (fn [idx] (not (nil? idx))) (rect->idxs-all map rect)))
 
+(defn with-objects-in-rect [map rect callback]
+  (doseq [idx (rect->idxs map rect)]
+    (let [rec (get-map-idx map idx)
+          objects (:objects rec)]
+      (doseq [obj @objects]
+        (callback obj)))))
+
 (defn idx->rect [map idx]
   (let [[mw _] (:dims map)]
     [(mod idx mw)
@@ -128,7 +128,6 @@
      1
      1]))
 
-; fixme: get-map coords?
 (defn kind-towards? [map rect dir kind]
   (let [center (rect/center rect)
         offset (vec/dir-offset dir)
