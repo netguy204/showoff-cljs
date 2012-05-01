@@ -102,24 +102,22 @@ space taking into account the current viewport"
 (defn extract-char-images [img char-dims num-chars scale color]
   (let [[iw ih] (gfx/img-dims img)
         [cw ch] char-dims
-        pixels-per-char (* cw ch)
-        fw (* cw scale)
-        fh (* ch scale)
+        new-dims [(* cw scale) (* ch scale)]
         chars-in-row (/ iw cw)
+        [r g b] color
         pdata (gfx/get-pixel-data img)]
     (for [idx (range num-chars)]
       (let [oy (* ch (Math/floor (/ idx chars-in-row)))
             ox (* cw (mod idx chars-in-row))
-            out (gfx/make-canvas [fw fh])
-            ctx (gfx/context out)]
-        (doseq [pxidx (range pixels-per-char)]
-          (let [chy (Math/floor (/ pxidx cw))
-                chx (mod pxidx cw)
-                pix (gfx/get-pixel pdata (+ ox chx) (+ oy chy))]
-            (when (= pix [0 0 0])
-              (set! (.-fillStyle ctx) color)
-              (.fillRect ctx (* chx scale) (* chy scale) scale scale))))
-        out))))
+            char-rect [ox oy cw ch]]
+        (gfx/map-nearest-neighbor
+         pdata char-rect new-dims
+         (fn [dest-data dest-base src-data src-base]
+           (when (= 0 (aget src-data src-base))
+             (aset dest-data dest-base r)
+             (aset dest-data (+ 1 dest-base) g)
+             (aset dest-data (+ 2 dest-base) b)
+             (aset dest-data (+ 3 dest-base) 255))))))))
 
 (defn load-font [img characters char-dims scale color]
   (let [characters (.toUpperCase characters)

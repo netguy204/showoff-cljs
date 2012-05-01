@@ -23,6 +23,9 @@
 (defn height [[_ _ _ h]]
   h)
 
+(defn scale [[x y w h] s]
+  [x y (* s w) (* s h)])
+
 (defn minmax [[ax ay aw ah]]
   [ax ay (+ ax aw) (+ ay ah)])
 
