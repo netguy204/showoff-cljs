@@ -62,10 +62,43 @@
 (defn draw [ctx map viewport-rect tile-dims]
   (let [[ox oy ow oh] viewport-rect
         [tw th] showoff.showoff.*tile-in-world-dims*
-        x (* ox tw)
-        y (* oy th)]
+        [mw mh] (:dims map)
+        mwpx (* mw tw)
+        mhpx (* mh th)
+        ww (* ow tw)
+        wh (* oh th)
+        x (Math/floor (* ox tw))
+        y (Math/floor (* oy th))
+
+        ;; handle the case when we're looking off the left edge of the
+        ;; world
+        dx (if (< x 0)
+             (Math/abs x)
+             0)
+        x (max 0 x)
+
+        ;; looking off the top edge of the world
+        dy (if (< y 0)
+             (Math/abs y)
+             0)
+        y (max 0 y)
+
+        ;; looking off the right edge of the world
+        ww (if (> (+ x ww) mwpx)
+             (- mwpx x)
+             ww)
+        ;; looking off the bottom edge
+        wh (if (> (+ y wh) mhpx)
+             (- mhpx y)
+             wh)]
+    
     (ensure-clean map)
-    (.drawImage ctx (:canvas map) (Math/floor (- x)) (Math/floor (- y)))))
+    (when (and (> ww 0) (> wh 0))
+      (.drawImage ctx (:canvas map)
+                  x y
+                  ww wh
+                  dx dy
+                  ww wh))))
 
 (defn get-map-idx [map idx]
   (let [data (:data map)]
