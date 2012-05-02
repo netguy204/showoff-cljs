@@ -18,9 +18,42 @@
 
 (def *alerted-symbols* (atom #{}))
 
+(defn- ensure-clean [map rect]
+  (let [[ox oy w h] rect
+        [mw mh] (:dims map)
+        [tw th] showoff.showoff.*tile-in-world-dims*
+        maxx (Math/ceil (+ ox w))
+        maxy (Math/ceil (+ oy h))
+        ox (Math/floor ox)
+        oy (Math/floor oy)
+        w (- maxx ox)
+        h (- maxy oy)
+        map-data (:data map)
+        canvas (:canvas map)
+        ctx (gfx/context canvas)]
+    (dotimes [ii (* w h)]
+      (let [rowi (Math/floor (/ ii w))
+            coli (mod ii w)
+            row (+ oy rowi)
+            col (+ ox coli)]
+        (when (and (>= row 0) (< row mh)
+                   (>= col 0) (< col mw))
+          (let [idx (+ col (* row mw))
+                rec (aget map-data idx)]
+            (when-not (:clean rec)
+              ;; re-render that chunk
+              (let [x (* col tw)
+                    y (* row th)]
+                (.clearRect ctx x y tw th)
+                (when (= (rec :kind) :image)
+                  (.drawImage ctx (rec :image) x y))
+                (aset map-data idx (conj rec {:clean true}))))))))
+    map))
+
 (defn load [img map-symbols]
-  (let [[w h] (gfx/img-dims img)
-        dims [w h]
+  (let [dims (gfx/img-dims img)
+        [w h] dims
+        [tw th] showoff.showoff.*tile-in-world-dims*
         pdata (gfx/get-pixel-data img)
         data (for [idx (range (* w h))]
                (let [pix (gfx/get-pixel-idx pdata (* 4 idx))
@@ -31,43 +64,20 @@
                    (when (not (@*alerted-symbols* pix))
                      (swap! *alerted-symbols* conj pix)
                      (js/alert
-                      (format "couldn't find map symbol %s" (pr-str pix)))))))]
+                      (format "couldn't find map symbol %s" (pr-str pix)))))))
+        map {:dims dims
+             :data (apply array data)
+             :canvas (gfx/make-canvas [(* w tw) (* h th)])}]
     
-   {:dims dims
-    :data (apply array data)}))
+    (ensure-clean map [0 0 w h])))
 
 (defn draw [ctx map viewport-rect tile-dims]
-  (let [[mw mh] (:dims map)
-        [ox oy ow oh] viewport-rect
-        [tw th] tile-dims
-        otx (Math/floor ox)
-        oty (Math/floor oy)
-        offx (- otx ox) ;; additive amount to fractionally offset tiles
-        offy (- oty oy)
-        rngx (- (Math/ceil (+ ox ow))
-                (Math/floor ox))
-        rngy (- (Math/ceil (+ oy oh))
-                (Math/floor oy))
-        num-idxs (* rngx rngy)
-        map-data (:data map)]
-
-    (dotimes [ii num-idxs]
-      (let [viewrow (Math/floor (/ ii rngx))
-            viewcol (mod ii rngx)
-            maprow (+ viewrow oty)
-            mapcol (+ viewcol otx)
-            tx (+ viewcol offx)
-            ty (+ viewrow offy)
-            drawx (* tw tx)
-            drawy (* th ty)
-            mapidx (+ mapcol (* maprow mw))]
-        (if (and (>= maprow 0) (>= mapcol 0)
-                 (< maprow mh) (< mapcol mw)
-                 (= ((aget map-data mapidx) :kind) :image))
-          (.drawImage ctx
-                      ((aget map-data mapidx) :image)
-                      (Math/floor drawx)
-                      (Math/floor drawy)))))))
+  (let [[ox oy ow oh] viewport-rect
+        [tw th] showoff.showoff.*tile-in-world-dims*
+        x (* ox tw)
+        y (* oy th)]
+    (ensure-clean map viewport-rect)
+    (.drawImage ctx (:canvas map) (- x) (- y))))
 
 (defn get-map-idx [map idx]
   (let [data (:data map)]
@@ -79,7 +89,8 @@
 (defn set-map-idx [map idx newvalue]
   (aset (:data map) idx
         (merge newvalue {:objects (atom #{})
-                         :coords (idx->coords map idx)})))
+                         :coords (idx->coords map idx)
+                         :clean false})))
 
 (defn move-object [map obj src-idxs dest-idxs]
   ;; remove from old locations
