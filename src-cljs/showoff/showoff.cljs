@@ -1,10 +1,9 @@
 (ns showoff.showoff
-  (:require [goog.string :as string]
-            [goog.string.format :as format]
-            [showoff.vec :as vec]
+  (:require [showoff.vec :as vec]
             [showoff.rect :as rect]
             [showoff.gfx :as gfx]
-            [showoff.map :as map]))
+            [showoff.map :as map]
+            [showoff.utils :as utils]))
 
 (defprotocol Tickable
   (tick [obj]))
@@ -60,6 +59,16 @@ space taking into account the current viewport"
      (Math/floor (* w twpx))
      (Math/floor (* h thpx))]))
 
+(defn inverse-transform [[sx sy]]
+  "convert from a position in screen space to the equivalent position
+  in tile-space"
+  (let [[vx vy vw vh] (viewport-rect)
+        [sw sh] (gfx/img-dims (display))
+        rw (/ vw sw)
+        rh (/ vh sh)]
+    [(+ vx (* sx rw))
+     (+ vy (* sy rh))]))
+
 (defn with-transform [ctx viewport callback]
   (.save ctx)
   (let [[vx vy] viewport
@@ -68,8 +77,6 @@ space taking into account the current viewport"
     (.translate ctx (- vx) (- vy))
     (callback))
   (.restore ctx))
-
-(def format string/format)
 
 (defn color
   ([[r g b]]
@@ -366,7 +373,7 @@ space taking into account the current viewport"
   (doseq [e @*entities*]
     (remove-entity map e)))
 
-;;; game loop
+;;; one cycle through the game loop
 
 (def ^:private *last-time* (goog/now))
 (def ^:private *remaining-ticks* 0)
@@ -378,11 +385,11 @@ space taking into account the current viewport"
   (set! *last-time* (goog/now)))
 
 (defn stats-string []
-  (format "%3d ms/tick %3d ms/draw"
+  (utils/format "%3d ms/tick %3d ms/draw"
           (Math/floor (/ *last-ticks-time* *last-ticks-evaled*))
           *last-draw-time*))
 
-(defn cycle-once [after-ticks]
+(defn- cycle-once [after-ticks]
   (let [now (goog/now)
         elapsed-time (- now *last-time*)
         remaining-ticks (+ *remaining-ticks* (* elapsed-time +ticks-per-ms+))
