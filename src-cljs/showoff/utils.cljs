@@ -36,6 +36,12 @@
     (append-child div content)
     div))
 
+(defn curry [fun & args]
+  (fn [last]
+    (let [args (into [] args)
+          full-args (conj args last)]
+      (apply fun full-args))))
+
 ;; borrowed from ibdknox/jayq
 (defn map->js [m]
   (let [out (js-obj)]
@@ -56,7 +62,19 @@
     (coll? x) (apply array (map clj->js x))
     :else x))
 
+;; end jayq
+
 (defn no-cache [resource]
   (str resource "?" (Math/random)))
 
-;; end jayq
+(defn with-loaded-assets [keys-and-loaders callback]
+  "load all requested assets in parallel and then activate callback
+with a map of those assets when they're ready"
+  (let [results (atom {})]
+    (doseq [[key loader] keys-and-loaders]
+      (loader
+       (fn [asset]
+         (swap! results conj {key asset})
+         (when (= (count @results) (count keys-and-loaders))
+           (callback @results)))))))
+
