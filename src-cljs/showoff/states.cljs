@@ -2,6 +2,7 @@
   (:use [showoff.showoff :only [format display cycle-once]]))
 
 (def *current-game-state* (atom nil))
+(def *requested-state* (atom nil))
 
 (def request-animation (or window/requestAnimationFrame   
                            window/webkitRequestAnimationFrame
@@ -31,6 +32,8 @@
       ;; not really changing state so we don't look for a setup function
       (change-complete))))
 
+(defn request-next-state [new-state]
+  (reset! *requested-state* new-state))
 
 (defn game-loop [states every-cycle-fn]
   ;; give the sound system a chance to run
@@ -44,7 +47,11 @@
         (request-animation #(game-loop states every-cycle-fn) (display))))
       
     ;; otherwise, perform in our current state
-    (let [next-state (cycle-once #(perform-after-ticks % states))]
+    (let [next-state (cycle-once #(perform-after-ticks % states))
+          next-state (if @*requested-state*
+                       @*requested-state*
+                       next-state)]
+      
       (with-changed-game-state next-state states
         (fn []
           (request-animation #(game-loop states every-cycle-fn) (display)))))))
