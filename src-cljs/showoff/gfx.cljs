@@ -96,3 +96,27 @@
   (aset dest-data (+ 1 dest-base) (aget src-data (+ 1 src-base)))
   (aset dest-data (+ 2 dest-base) (aget src-data (+ 2 src-base)))
   (aset dest-data (+ 3 dest-base) (aget src-data (+ 3 src-base))))
+
+(defn resize-nearest-neighbor
+  ([pdata dest-dims]
+     (let [[w h] (:dims pdata)]
+       (resize-nearest-neighbor pdata [0 0 w h] dest-dims)))
+  
+  ([pdata src-rect dest-dims]
+     (map-nearest-neighbor pdata src-rect dest-dims pixel-identity)))
+
+(defn slice-sprite-image [pdata [x y]]
+  (let [[sw sh] showoff.showoff.*tile-dims*]
+    (resize-nearest-neighbor pdata [(* x sw) (* y sh) sw sh]
+                             showoff.showoff.*tile-in-world-dims*)))
+
+(defn slice-sprite [pdata desc]
+  (if-let [img-coords (:image desc)]
+    (conj desc {:image (slice-sprite-image pdata img-coords)})
+    desc))
+
+(defn slice-sprites [pdata sprite-map]
+  (let [sprite-keys (keys sprite-map)
+        sprites (map #(slice-sprite pdata (sprite-map %)) sprite-keys)]
+    (zipmap sprite-keys sprites)))
+
