@@ -14,12 +14,18 @@
 (defprotocol Drawable
   (draw [obj ctx]))
 
+(defprotocol Indexed
+  (indexed? [obj]))
+
 (extend-type default
   Drawable
   (draw [_ _] false)
 
   Tickable
-  (tick [_] nil))
+  (tick [_] nil)
+
+  Indexed
+  (indexed? [obj] true))
 
 (def +ticks-per-ms+ (/ 35 1000))
 (def +secs-per-tick+ (/ (* +ticks-per-ms+ 1000)))
@@ -96,14 +102,6 @@ space taking into account the current viewport"
 (defn draw-sprite [ctx img [x y]]
   (let [[tx ty] (transform [x y 1 1])]
     (.drawImage ctx img (Math/floor tx) (Math/floor ty))))
-
-(defn resize-nearest-neighbor
-  ([pdata dest-dims]
-     (let [[w h] (:dims pdata)]
-       (resize-nearest-neighbor pdata [0 0 w h] dest-dims)))
-  
-  ([pdata src-rect dest-dims]
-     (gfx/map-nearest-neighbor pdata src-rect dest-dims gfx/pixel-identity)))
 
 ;;; fonts
 
@@ -355,18 +353,22 @@ space taking into account the current viewport"
   (doseq [entity @*entities*]
     (tick entity)))
 
-(defn draw-entities [ctx]
-  (doseq [entity @*entities*]
-    (draw entity ctx)))
+(defn draw-entities [map ctx]
+  (if map
+    (map/with-objects-in-rect map (viewport-rect)
+      (fn [entity]  (draw entity ctx)))
+    
+    (doseq [entity @*entities*]
+      (draw entity ctx))))
 
 (defn add-entity [map e]
   (swap! *entities* conj e)
-  (when (and map (satisfies? Rectable e))
+  (when (and map (indexed? e) (satisfies? Rectable e))
     (map/move-object map e nil (map/rect->idxs map (to-rect e)))))
 
 (defn remove-entity [map e]
   (swap! *entities* disj e)
-  (when (and map (satisfies? Rectable e))
+  (when (and map (indexed? e) (satisfies? Rectable e))
     (map/move-object map e (map/rect->idxs map (to-rect e)) nil)))
 
 (defn clear-entities [map]
