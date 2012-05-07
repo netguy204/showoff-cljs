@@ -101,7 +101,7 @@ space taking into account the current viewport"
 
 (defn draw-sprite [ctx img [x y]]
   (let [[tx ty] (transform [x y 1 1])]
-    (.drawImage ctx img (Math/floor tx) (Math/floor ty))))
+    (.drawImage ctx img (Math/round tx) (Math/round ty))))
 
 ;;; fonts
 
@@ -187,12 +187,32 @@ space taking into account the current viewport"
 (defn move-check-map-collision [map [dx dy] rect on-x-collide on-y-collide]
   (let [x-moved-rect (rect/offset rect [dx 0])
         x-offset (if-let [hit-idx (first (map-collisions map x-moved-rect))]
-                   (do (on-x-collide hit-idx) 0)
+                   (do
+                     (on-x-collide hit-idx)
+                     ;; snap to boundary
+                     (cond
+                      (> dx 0.0001)
+                      (- (rect/minx (map/idx->rect map hit-idx)) (rect/maxx rect))
+
+                      (< dx -0.0001)
+                      (- (rect/maxx (map/idx->rect map hit-idx)) (rect/minx rect))
+
+                      :else 0))
                    dx)
 
         y-moved-rect (rect/offset rect [x-offset dy])
         y-offset (if-let [hit-idx (first (map-collisions map y-moved-rect))]
-                   (do (on-y-collide hit-idx) 0)
+                   (do
+                     (on-y-collide hit-idx)
+                     ;; snap to boundary
+                     (cond
+                      (> dy 0.0001)
+                      (- (rect/miny (map/idx->rect map hit-idx)) (rect/maxy rect))
+
+                      (< dy -0.0001)
+                      (- (rect/maxy (map/idx->rect map hit-idx)) (rect/miny rect))
+
+                      :else 0))
                    dy)]
     
     [x-offset y-offset]))

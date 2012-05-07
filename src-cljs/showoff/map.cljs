@@ -129,12 +129,10 @@
 (defn rect->idxs-all [map rect]
   (let [[rx ry rw rh] rect
         [mw mh] (:dims map)
-        rngx (- (Math/ceil (+ rw rx))
-                (Math/floor rx))
-        rngy (- (Math/ceil (+ rh ry))
-                (Math/floor ry))
         ox (Math/floor rx)
-        oy (Math/floor ry)]
+        oy (Math/floor ry)
+        rngx (- (Math/ceil (+ rw rx)) ox)
+        rngy (- (Math/ceil (+ rh ry)) oy)]
 
     (for [ix (range rngx)
           iy (range rngy)]

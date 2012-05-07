@@ -1,5 +1,6 @@
 (ns showoff.states
-  (:use [showoff.showoff :only [format display cycle-once]]))
+  (:use [showoff.showoff :only [format display cycle-once]])
+  (:require [showoff.timer :as timer]))
 
 (def *current-game-state* (atom nil))
 (def *requested-state* (atom nil))
@@ -35,16 +36,16 @@
 (defn request-next-state [new-state]
   (reset! *requested-state* new-state))
 
-(defn game-loop [states every-cycle-fn]
-  ;; give the sound system a chance to run
-  (every-cycle-fn)
-
+(defn game-loop [states]
+  ;; service our timers
+  (timer/service)
+  
   (if (= @*current-game-state* nil)
     ;; set the state to start
     (with-changed-game-state :start states
       (fn []
         (perform-after-ticks 0 states)
-        (request-animation #(game-loop states every-cycle-fn) (display))))
+        (request-animation #(game-loop states) (display))))
       
     ;; otherwise, perform in our current state
     (let [next-state (cycle-once #(perform-after-ticks % states))
@@ -54,5 +55,5 @@
       
       (with-changed-game-state next-state states
         (fn []
-          (request-animation #(game-loop states every-cycle-fn) (display)))))))
+          (request-animation #(game-loop states) (display)))))))
 
