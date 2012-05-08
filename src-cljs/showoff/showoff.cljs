@@ -65,7 +65,7 @@ space taking into account the current viewport"
      (Math/floor (* w twpx))
      (Math/floor (* h thpx))]))
 
-(defn inverse-transform [[sx sy]]
+(defn inverse-transform-position [[sx sy]]
   "convert from a position in screen space to the equivalent position
   in tile-space"
   (let [[vx vy vw vh] (viewport-rect)
@@ -74,6 +74,12 @@ space taking into account the current viewport"
         rh (/ vh sh)]
     [(+ vx (* sx rw))
      (+ vy (* sy rh))]))
+
+(defn inverse-transform-dims [[w h]]
+  (let [[tw th] *tile-in-world-dims*
+        w (/ w tw)
+        h (/ h th)]
+    [w h]))
 
 (defn with-transform [ctx viewport callback]
   (.save ctx)
