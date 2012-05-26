@@ -14,8 +14,8 @@
 (defprotocol Drawable
   (draw [obj ctx]))
 
-(defprotocol Indexed
-  (indexed? [obj]))
+(defprotocol MapIndexed
+  (map-indexed? [obj]))
 
 (extend-type default
   Drawable
@@ -24,8 +24,8 @@
   Tickable
   (tick [_] nil)
 
-  Indexed
-  (indexed? [obj] true))
+  MapIndexed
+  (map-indexed? [obj] true))
 
 (def +ticks-per-ms+ (/ 35 1000))
 (def +secs-per-tick+ (/ (* +ticks-per-ms+ 1000)))
@@ -389,12 +389,12 @@ space taking into account the current viewport"
 
 (defn add-entity [map e]
   (swap! *entities* conj e)
-  (when (and map (indexed? e) (satisfies? Rectable e))
+  (when (and map (map-indexed? e) (satisfies? Rectable e))
     (map/move-object map e nil (map/rect->idxs map (to-rect e)))))
 
 (defn remove-entity [map e]
   (swap! *entities* disj e)
-  (when (and map (indexed? e) (satisfies? Rectable e))
+  (when (and map (map-indexed? e) (satisfies? Rectable e))
     (map/move-object map e (map/rect->idxs map (to-rect e)) nil)))
 
 (defn clear-entities [map]

@@ -7,9 +7,11 @@
     img))
 
 (defn with-img [url callback]
-  (let [img (get-img url)]
-    (set! (.-onload img) (fn [] (callback img)))
-    img))
+  (if url
+    (let [img (get-img url)]
+      (set! (.-onload img) (fn [] (callback img)))
+      img)
+    (callback nil)))
 
 (defn make-canvas [[w h]]
   (let [canvas (dom/createDom "canvas")]

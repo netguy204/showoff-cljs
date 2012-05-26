@@ -1,4 +1,5 @@
 (ns showoff.ai
+  (:use [showoff.showoff :only [Tickable]])
   (:require [showoff.input :as input]))
 
 (defprotocol Brain
@@ -11,8 +12,13 @@
   Brain
   (state [brain] (input/state)))
 
+(defrecord NullBrain []
+  Brain
+  (state [brain] {}))
+
+
 (defrecord BrainRecorder [brain recording]
-  showoff.showoff.Tickable
+  Tickable
   (tick [recorder]
     (if (empty? @recording)
       ;; bootstrap
@@ -30,7 +36,7 @@
                                  :count 1}))))))
 
 (defrecord RecordedBrain [recording index-state remaining-state]
-  showoff.showoff.Tickable
+  Tickable
   (tick [brain]
     (when-not (= @index-state :end)
       (let [index (if @index-state
@@ -74,7 +80,7 @@
        :else
        ((aget recording idx) :brain))))
 
-  cljs.core.IHash
+  IHash
   (-hash [brain]
     (.getUid js/goog brain)))
 
